@@ -16,7 +16,7 @@ mod refs;
 use std::io::Write;
 use std::process::ExitCode;
 
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 
 use crate::cli::{Cli, Command, ProjectCmd, TaskCmd};
 use crate::cmd::Ctx;
@@ -115,6 +115,15 @@ impl From<String> for Failure {
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    // No arguments at all explains itself, on stderr and with exit 2. clap's
+    // `arg_required_else_help` stopped doing that in 4.6: it now answers with its own
+    // "requires a subcommand" error, which lists the subcommands but not how to start.
+    // Rendering the long help here keeps the promise the help text makes.
+    if std::env::args_os().len() == 1 {
+        let help = Cli::command().render_long_help();
+        eprint!("{help}");
+        return ExitCode::from(2);
+    }
     let args = Cli::parse();
     match run(&args).await {
         Ok(()) => ExitCode::SUCCESS,

@@ -65,6 +65,11 @@ Things that will bite an agent writing commands into a script:
   `{"id":31,"ok":true}` for an update, `{"deleted":31,"ok":true}` for a delete. In table
   mode the confirmation goes to stderr instead, so stdout stays parseable either way.
 - **`call` takes its body as `--body`**, not `--json` (`--json` is the output flag now).
+- **A state write can lose to Odoo's compute**: a task with open dependencies reads
+  `waiting` whatever `--state` you write, and the CLI now says so on stderr when it
+  happens. Close the blockers first, or expect `waiting`.
+- **Deletes name what cascades** (a project takes its tasks and milestones, a task takes
+  its subtasks) in the prompt and the dry run, so `-f` is never a blind guess.
 - Names that match several records are an error listing them, never a guess.
 
 Credentials resolve flag, then process environment (`ODOO_URL`, `ODOO_API_KEY`,

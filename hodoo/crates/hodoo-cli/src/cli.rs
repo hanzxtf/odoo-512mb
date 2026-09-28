@@ -165,7 +165,10 @@ pub enum Command {
     /// Every open task of a project, grouped by stage
     #[command(
         long_about = "The kanban a founder actually looks at: one line per stage, the \
-                            tasks in it, soonest deadline first.\n\nExamples:\n  hodoo board\n  \
+                            tasks in it, soonest deadline first.\n\nThat is the table. Its \
+                            JSON is one object per project holding every open task in a \
+                            single `tasks` array, so a script counts tasks rather than \
+                            lines.\n\nExamples:\n  hodoo board\n  \
                             hodoo board acme\n  hodoo board 49 --mine"
     )]
     Board(BoardArgs),

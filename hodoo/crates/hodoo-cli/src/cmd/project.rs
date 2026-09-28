@@ -318,12 +318,23 @@ pub async fn update(ctx: &Ctx, text: &str, args: &ProjectFieldArgs) -> Result<()
 pub async fn rm(ctx: &Ctx, text: &str, force: bool) -> Result<(), Failure> {
     let id = refs::project(&ctx.client, &Ref::parse(text)).await?;
     let project = ctx.client.projects().get(id).await?;
-    let action = format!(
+    // Milestones cascade with the project (verified against 19.0), so the sentence
+    // says so: a delete prompt that hides what goes with it is a prompt that misleads.
+    let milestones = cmd::count_of(
+        ctx,
+        "project.milestone",
+        json!([["project_id", "=", id.get()]]),
+    )
+    .await;
+    let mut action = format!(
         "delete project #{} \"{}\" and its {} tasks",
         id.get(),
         project.name,
         project.task_count
     );
+    if let Some(count) = milestones.filter(|count| *count > 0) {
+        action.push_str(&format!(" and {count} milestones"));
+    }
 
     if ctx.dry_run {
         return Ok(ctx.out.note(&format!("would {action}"))?);

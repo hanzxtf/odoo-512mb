@@ -124,20 +124,23 @@ Then:
 
 ## 8. Changes that would stop this class of failure at the source
 
-Recommended, in order of value:
+Done, and covered by tests in `crates/hodoo-cli/tests/ux.rs`:
 
-1. **`task update --state` should warn when the write is overridden.** `crates/hodoo-cli/src/cmd/task.rs:528` writes `fields.state`; a follow-up read could compare and print a
-   stderr hint ("Odoo recomputed this to waiting: the task has open blockers"). Same
-   shape as the existing hints for actor assignment. This turns a silent no-op into a
-   sentence at the moment it happens.
-2. **`project rm` / `task rm` should report what cascades.** The confirm message should
-   name the child records that will go with it (tasks, milestones, chatter), so a script
-   author learns the cascade from the prompt instead of from a 404.
-3. **`board` should say which shape it is in.** `--json` returning one object with a
-   `tasks` array, while the table groups by column, is a trap for scripts; document it in
-   `--help` (done in the README as of this SOP).
-4. **A `hodoo tag create`.** Tags can only be created through `--tag` today, so
-   `tag ls` is the only way to confirm a namespace; a create would make tag setup
-   explicit rather than a side effect of the first task.
-5. **The README's "What it encodes" is the right home for cascades and the shared tag
-   model** - both are now in it, because they cost an afternoon each otherwise.
+1. **`task update --state` warns when the write is overridden.** A state-changing write
+   now reads the task back and, when Odoo's compute wins, says so on stderr with the
+   reason and the `task deps` call that explains it. `-o json` is untouched, `-q` stays
+   quiet. This turns the silent no-op into a sentence at the moment it happens.
+2. **`project rm` / `task rm` name what cascades.** The confirmation and the dry run say
+   "and its 79 tasks and 7 milestones" / "and its 2 subtasks", so a script author learns
+   the cascade from the prompt rather than from a 404 afterwards.
+3. **`board --help` says which shape it is in.** The table groups by column; `--json` is
+   one object holding every open task, so a script counts tasks rather than lines. Also
+   documented in `hodoo/README.md`.
+
+Still open, in order of value:
+
+4. **A `hodoo tag create`.** Tags exist only as a side effect of `--tag`, so `tag ls` is
+   the only way to confirm a namespace; an explicit create would make tag setup visible.
+5. **`task create --depends-on` could report the state it will not compute.** Today a
+   dependency written at creation leaves the task reading "in progress" until it is
+   written again; a sentence saying so would save the same afternoon twice.

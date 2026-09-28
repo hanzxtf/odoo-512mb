@@ -107,7 +107,13 @@ invocation was wrong (bad flag, unknown reference, a delete without confirmation
   is an error with a suggestion; one that matches several is an error that lists them,
   because a guess here writes to the wrong record.
 - **Deletes ask first.** `project rm`, `task rm` and `milestone rm` prompt when stdin is
-  a terminal; a script has to say `-f`/`--force` (or use `--no-input` to be told so).
+  a terminal; a script has to say `-f`/`--force` (or use `--no-input` to be told so). The
+  prompt names what goes with the record - a project takes its tasks *and* its
+  milestones, a task takes its subtasks - so nobody learns the cascade by typing `-f`.
+- **A state write reports when Odoo overrides it.** `task update --state …`, `task done`,
+  `task cancel` and `task reopen` read the task back, and when the state Odoo computes
+  differs from the one asked for they say so on stderr with the reason. The JSON contract
+  is untouched: the hint never reaches `-o json`.
 - **`-n`/`--dry-run` shows what would be sent and sends nothing**, including for
   `project create --template`.
 - **`-q`/`--quiet`** drops the confirmations and hints, keeping the data.

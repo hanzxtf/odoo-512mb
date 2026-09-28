@@ -65,6 +65,14 @@ async fn server() -> MockServer {
     MockServer::start().await
 }
 
+/// The same task as Odoo answers after a state write it recomputed: blocked by an
+/// open dependency, so the state it computes is "waiting" whatever was written.
+fn odoo_waiting_task() -> Value {
+    let mut task = odoo_task(3);
+    task[0]["state"] = json!("04_waiting_normal");
+    task
+}
+
 fn hodoo(server: &MockServer) -> Command {
     let mut command = Command::cargo_bin("hodoo").expect("the binary");
     command
@@ -496,4 +504,115 @@ async fn completions_and_help_need_no_server_at_all() {
         .assert()
         .code(2)
         .stderr(predicate::str::contains("project"));
+
+    // `board` answers differently per mode, which a script has to know before it
+    // counts lines of JSON: the help says so.
+    Command::cargo_bin("hodoo")
+        .expect("the binary")
+        .args(["board", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("counts tasks rather than"))
+        .stdout(predicate::str::contains("lines"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_state_write_says_so_when_odoo_recomputes_it() {
+    let server = server().await;
+    Mock::given(method("POST"))
+        .and(path("/json/2/project.task/read"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(odoo_waiting_task()))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/json/2/project.task/write"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!(true)))
+        .mount(&server)
+        .await;
+
+    // Odoo computes the state from open dependencies, so the write reads back as
+    // waiting. A person gets a sentence where it happens...
+    hodoo(&server)
+        .args(["task", "update", "31", "--state", "changes-requested"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "reads waiting rather than changes requested",
+        ))
+        .stderr(predicate::str::contains("hodoo task deps 31"));
+
+    // ...and a script gets its contract untouched: the hint never reaches JSON mode.
+    hodoo(&server)
+        .args([
+            "task",
+            "update",
+            "31",
+            "--state",
+            "changes-requested",
+            "-o",
+            "json",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("{\"id\":31,\"ok\":true}"))
+        .stderr(predicate::str::is_empty());
+
+    // A state that does stick says nothing extra.
+    hodoo(&server)
+        .args(["task", "update", "31", "--state", "changes-requested", "-q"])
+        .assert()
+        .success()
+        .stderr(predicate::str::is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_delete_prompt_names_what_goes_with_it() {
+    let server = server().await;
+    Mock::given(method("POST"))
+        .and(path("/json/2/project.project/read"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(odoo_project()))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/json/2/project.task/read"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(odoo_task(3)))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/json/2/project.milestone/search_count"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!(3)))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/json/2/project.task/search_count"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!(2)))
+        .mount(&server)
+        .await;
+
+    // Milestones cascade with the project, so the refusal says so before anyone
+    // types -f and finds out afterwards.
+    hodoo(&server)
+        .args(["project", "rm", "49"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("refusing to delete project #49"))
+        .stderr(predicate::str::contains("and its 8 tasks and 3 milestones"));
+
+    // Subtasks go with their parent task.
+    hodoo(&server)
+        .args(["task", "rm", "31"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("and its 2 subtasks"));
+
+    // --dry-run promises the same thing without asking. A delete's dry run is a note
+    // rather than a preview, so it lands on stderr and stdout stays for the result.
+    hodoo(&server)
+        .args(["project", "rm", "49", "-n"])
+        .assert()
+        .success()
+        .stdout(predicate::str::is_empty())
+        .stderr(predicate::str::contains(
+            "would delete project #49 \"Acme Manufacturing - Website\" and its 8 tasks and 3 milestones",
+        ));
 }

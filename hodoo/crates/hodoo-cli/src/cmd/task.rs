@@ -356,6 +356,28 @@ pub async fn update(ctx: &Ctx, text: &str, args: &TaskFieldArgs) -> Result<(), F
     ctx.client.tasks().update(id, fields).await?;
     ctx.out.changed(id.get())?;
     ctx.out.note(&format!("updated  task #{}", id.get()))?;
+    if let Some(state) = args.state {
+        warn_if_recomputed(ctx, id, state_of(state)).await?;
+    }
+    Ok(())
+}
+
+/// Odoo computes a task's state from its open dependencies, so a state write can lose
+/// to that compute: the task reads back as `waiting` on the next read whatever was
+/// written. That is surprising enough to be worth a sentence where it happens, rather
+/// than a silent no-op the caller finds out about later.
+async fn warn_if_recomputed(ctx: &Ctx, id: TaskId, wanted: TaskState) -> Result<(), Failure> {
+    let after = ctx.client.tasks().get(id).await?;
+    if after.state == wanted {
+        return Ok(());
+    }
+    ctx.out.hint(&format!(
+        "the task reads {} rather than {}: Odoo computes the state from its open \
+         dependencies, so a task that waits on something is waiting (hodoo task deps {})",
+        state_word(after.state),
+        state_word(wanted),
+        id.get()
+    ))?;
     Ok(())
 }
 
@@ -371,6 +393,7 @@ pub async fn set_state(ctx: &Ctx, text: &str, state: TaskState) -> Result<(), Fa
     ctx.client.tasks().set_state(id, state).await?;
     ctx.out.changed(id.get())?;
     ctx.out.note(&format!("{word}  task #{}", id.get()))?;
+    warn_if_recomputed(ctx, id, state).await?;
     Ok(())
 }
 
@@ -489,7 +512,18 @@ pub async fn deps(ctx: &Ctx, text: &str) -> Result<(), Failure> {
 pub async fn rm(ctx: &Ctx, text: &str, force: bool) -> Result<(), Failure> {
     let id = refs::task(&ctx.client, &Ref::parse(text)).await?;
     let task = ctx.client.tasks().get(id).await?;
-    let action = format!("delete task #{} \"{}\"", id.get(), clip(&task.name, 40));
+    // Deleting a task takes its subtasks with it (verified against 19.0), and a
+    // confirmation that hides that is a confirmation that misleads.
+    let subtasks = cmd::count_of(ctx, "project.task", json!([["parent_id", "=", id.get()]])).await;
+    let action = match subtasks {
+        Some(n) if n > 0 => format!(
+            "delete task #{} \"{}\" and its {} subtasks",
+            id.get(),
+            clip(&task.name, 40),
+            n
+        ),
+        _ => format!("delete task #{} \"{}\"", id.get(), clip(&task.name, 40)),
+    };
 
     if ctx.dry_run {
         return Ok(ctx.out.note(&format!("would {action}"))?);

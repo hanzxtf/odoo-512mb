@@ -170,6 +170,20 @@ pub async fn name_of(ctx: &Ctx, model: &str, id: i64) -> Result<Option<String>, 
     Ok(names(ctx, model, [id]).await?.remove(&id))
 }
 
+/// How many records match a domain, for the sentences that say what a delete takes
+/// with it.
+///
+/// Best effort on purpose: the count is a courtesy in a confirmation, and a delete
+/// the user asked for should not fail because a counting read did. `None` means Odoo
+/// did not answer with a number, and the caller phrases its sentence without one.
+pub async fn count_of(ctx: &Ctx, model: &str, domain: Value) -> Option<i64> {
+    ctx.client
+        .call(model, "search_count", json!({ "domain": domain }))
+        .await
+        .ok()?
+        .as_i64()
+}
+
 /// A record's chatter, newest last, flattened for printing: when, who, what.
 ///
 /// # Errors
