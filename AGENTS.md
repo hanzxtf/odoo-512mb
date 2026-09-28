@@ -91,6 +91,37 @@ server is reachable; `hodoo whoami` proves url, certificate and key together (it
 not have comes back as `{"kind":"odoo","status":500,"message":"Invalid field ..."}`, so
 the escape hatch tells you when a model changed.
 
+### Building a dataset over the CLI: read the SOP first
+
+The second worked example is `hodoo/scenarios/icare-dd.sh {up|down|show}` (`just icare-dd
+up`): a manager-level due diligence of a fund manager as one project - 15 workstreams x 5
+phases, 4 phase gates, 7 milestones, 79 tasks, marker `(icare-dd)`, assertions as it
+builds. Every task description carries `Workstream`/`Owner`/`Standard`/`Evidence`/
+`Acceptance` lines, urgency maps to a `red`/`amber`/`green` tag, and `up` fails if a red
+item has no `Remediation` line. The strategy, standards matrix, RACI and rating rules
+behind it are in `docs/superpowers/specs/2026-09-28-icare-manager-dd-design.md`.
+
+**Before writing a third one, read `hodoo/scenarios/SOP.md`.** It exists because the iCare
+build hit seven failures from one root cause: an assumption about Odoo, or about the
+script's own data, typed as a constant. The rules it distils, in short:
+
+- **Derive every count from the data table**, never type a total into an assertion
+  (`ITEM_COUNT`, `WS_COUNT`, `TASKS_TOTAL` in `icare-dd.sh`). Odoo also keeps **one** tag
+  model for projects and tasks, so project tags count towards a tag total.
+- **Guard a rebuild on a residue sum of everything the script creates** (projects, task
+  stages, tags, milestones). An interrupted teardown leaves orphan stages that belong to no
+  project, and a projects-only guard walks past them into duplicates.
+- **Re-query child ids after a cascade.** Deleting a project takes its tasks, milestones
+  and chatter with it, so a milestone id list gathered before the delete 404s.
+- **`state` is computed from open blockers**, so a write loses to the compute: set a state
+  only where a task's blockers are closed, and pin the surprising direction as an assertion
+  rather than fighting it (Odoo does not compute it during creation either).
+- **Never parse a table with `awk`.** In JSON mode there is no table, `--limit 0` means
+  unlimited, and `board`'s JSON is one object holding every open task while its table
+  groups by column.
+- **Assert invariants, not just counts** - "no task is missing its four lines", "no red
+  without a remediation" - and end teardown by asserting zero of each kind it created.
+
 ### JSON-2 facts to know before touching `hodoo/`
 
 - The whole API is `POST /json/2/<model>/<method>`, `Authorization: Bearer <api key>`

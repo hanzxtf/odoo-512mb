@@ -36,7 +36,11 @@ fi
 
 step "justfile"
 if command -v just >/dev/null 2>&1; then
-  just --fmt --check --justfile justfile || status=1
+  # `just --fmt` is behind the unstable flag as of 1.40, and without it the step
+  # does not fail on a formatting problem, it fails on the flag: the gate then
+  # reports a justfile error that is really a version check. The variable is
+  # ignored by releases old enough not to need it.
+  JUST_UNSTABLE=1 just --fmt --check --justfile justfile || status=1
 else
   echo "skipped: just not installed (apt install just)"
 fi

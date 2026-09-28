@@ -5,13 +5,16 @@
 # and re-running a recipe: nothing here edits the machine directly.
 
 set shell := ["bash", "-uc"]
+
 # Recipe arguments reach the shell as "$@", so `just hodoo -- --name "two words"`
 # arrives as one argument instead of three.
-set positional-arguments
+
+set positional-arguments := true
 
 repo := justfile_directory()
 
 # Cargo is not always on PATH: it usually lives in ~/.cargo/bin here.
+
 hodoo_env := 'PATH="$PATH:$HOME/.cargo/bin"'
 hodoo_manifest := repo / "hodoo/Cargo.toml"
 hodoo_debug := repo / "hodoo/target/debug/hodoo"
@@ -75,9 +78,14 @@ cert:
 reload:
     sudo nginx -t
     sudo systemctl reload nginx
+
 # The startup-founder dataset in Odoo: just scenario up | down | show
 scenario action="show":
     {{ repo }}/hodoo/scenarios/startup-founder.sh {{ action }}
+
+# The iCare manager-DD dataset (15 workstreams, 79 tasks): just icare-dd up
+icare-dd action="show":
+    {{ repo }}/hodoo/scenarios/icare-dd.sh {{ action }}
 
 # ---------------------------------------------------------------------------
 # hodoo: the Rust client for Odoo's JSON-2 API (see hodoo/README.md).

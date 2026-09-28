@@ -192,6 +192,18 @@ Odoo's dates are `DateTime<Utc>`/`NaiveDate` rather than strings, and
   created with dependencies still reads `01_in_progress` until `depend_on_ids` is
   written again (or `state` is set explicitly) - verified against 19.0, and the
   reason `hodoo task create --depends-on` alone does not produce a waiting task.
+  The same compute wins over a later write: `task update --state changes-requested`
+  on a task with open blockers reads `waiting` again on the next read, because the
+  state is recomputed from the blockers. Set a state only where they are closed.
+- Deleting a project **cascades**: its tasks, its milestones and its chatter go with
+  it. A child id list gathered before the delete is stale afterwards, and unlinking
+  from it answers 404. Milestones are the one that catches people out.
+- Projects and tasks share **one tag model** (`project.tags`), so `tag ls` and a tag
+  count include both; a tag is created on demand by `--tag` on any record.
+- `--limit 0` means *unlimited* on the `ls` commands, and the default is a page.
+- `board` answers differently per mode: the table groups open tasks by column (one
+  line each, plus a header), while `-o json` returns a single object holding every
+  open task. Counting lines of a JSON board counts one.
 - Assigning `user_ids` also adds the calling user and stamps `date_assign`.
 - A task without a project is private and loses its stage.
 - Milestones need `allow_milestones` on the project, and task dependencies need
@@ -307,6 +319,25 @@ cargo build                       # the scenario drives the built binary
 ./scenarios/startup-founder.sh show
 ./scenarios/startup-founder.sh down
 ```
+
+`scenarios/icare-dd.sh` is the second one, and a harder test of the CLI: a manager-level
+due diligence of a cross-border fund manager as one project with 15 workstreams, five
+phases, four phase gates, 7 milestones and 79 tasks, each of which carries its own
+standard, evidence and acceptance test in its description. It builds the same way
+(`up` / `down` / `show`, marker `(icare-dd)`, assertions as it goes) and it asserts the
+rules that make the dataset worth having: no task without an owner, a standard, the
+evidence and the acceptance test, and no red finding without a remediation.
+
+```sh
+just icare-dd up                  # or ./scenarios/icare-dd.sh up
+./scenarios/icare-dd.sh show
+just icare-dd down
+```
+
+**Before writing a third one, read [`scenarios/SOP.md`](scenarios/SOP.md).** It records the
+rules the first two builds proved the hard way: derive every count from the data table
+rather than typing a total, guard a rebuild on a residue sum of *everything* the script
+creates, re-query child ids after a cascade, and never parse a table with `awk`.
 
 The toolchain lives in `~/.cargo/bin`, which is not always on `PATH`; use
 `~/.cargo/bin/cargo` or export the path first.
