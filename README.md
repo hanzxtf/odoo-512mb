@@ -160,6 +160,11 @@ Names work wherever an id does (`--project acme`, `--stage Review`, `--tag urgen
 is there to answer the confirmation, and `-n` shows what a change would send without
 sending it.
 
+Around the client, `just` wraps the rest: `just hodoo -- <args>` to run it, `hodoo-check`
+(fmt + clippy + tests), `hodoo-test`, `hodoo-live-test` (needs a server), `hodoo-prod-build`,
+`hodoo-install`, `hodoo-doctor` (is this checkout ready?) and `hodoo-clean`. `just` on its
+own lists them all.
+
 Credentials never live in the repository: `.env*` is gitignored. The two suites that
 touch a real server (`tests/live.rs`, `tests/drift.rs`) are `#[ignore]`d until
 `HODOO_LIVE=1` is set. Full reference, including the Odoo 19 behaviours the client

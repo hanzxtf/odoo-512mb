@@ -40,6 +40,9 @@ Cargo commands run from `hodoo/`.
 |---|---|
 | `cargo test` | Unit tests, stub-HTTP tests (`tests/http.rs`, wiremock), doctests |
 | `cargo clippy --all-targets -- -D warnings` | The lint gate; `unwrap_used`/`expect_used` are warnings, so no unwrapping outside tests |
+| `just hodoo-check` | The whole gate: `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` |
+| `just hodoo -- <args>` | Runs the client (`just hodoo -- task ls --project acme`); builds it first, quietly |
+| `just hodoo-test` / `hodoo-live-test` / `hodoo-prod-build` / `hodoo-install` / `hodoo-doctor` / `hodoo-clean` | Offline tests · the two server suites · release build against the lock file · install onto PATH · is this checkout ready? · build output and /tmp scratch |
 | `cargo fmt --check` | Formatting (run `cargo fmt` to fix) |
 | `HODOO_LIVE=1 cargo test -- --ignored --nocapture` | The two ignored suites: `tests/live.rs` (creates and deletes real records) and `tests/drift.rs` (field names vs Odoo's `/doc-bearer/<model>.json`; needs a Settings-level key, otherwise it prints a skip) |
 

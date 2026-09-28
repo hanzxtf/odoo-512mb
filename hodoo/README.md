@@ -36,6 +36,11 @@ is one flag away for scripts. Everything below works with a name wherever it say
 project, task, stage, milestone, user or tag.
 
 ```sh
+# From the repository root, `just` builds it first and passes arguments through:
+just hodoo -- task ls --project acme
+# The recipes: hodoo-check (fmt + clippy + tests), hodoo-test, hodoo-live-test,
+# hodoo-prod-build, hodoo-install, hodoo-doctor, hodoo-clean.
+
 # Either export them, or put them in a .env at (or above) the working directory --
 # a .env at the repository root covers every command below.
 export ODOO_URL=https://odoo.example.com
