@@ -66,3 +66,6 @@ cert:
 reload:
     sudo nginx -t
     sudo systemctl reload nginx
+# The startup-founder dataset in Odoo: just scenario up | down | show
+scenario action="show":
+    {{ repo }}/hodoo/scenarios/startup-founder.sh {{ action }}

@@ -8,6 +8,10 @@ One command deploys the whole stack. Every config lives in this repo and is
 repo, not the live machine, is the source of truth. Re-run the deploy after any
 edit; it is idempotent.
 
+The repo also ships **`hodoo/`**, a Rust client and CLI for Odoo 19's JSON-2 API,
+so projects and tasks can be driven from a script, an agent or (later) a web app
+instead of the browser: see [The hodoo client](#the-hodoo-client-rust).
+
 ## Architecture
 
 ```text
@@ -117,6 +121,49 @@ HTTP/TLS on 80/8069/443, certificate expiry, newest backup fresh *and* readable
 by `pg_restore`, stray `.partial` dumps, filestore tarball, disk headroom,
 fail2ban jail, pending security updates, reboot-required. Exit status is 1 if
 anything FAILed; warnings alone do not fail.
+
+## The hodoo client (Rust)
+
+`hodoo/` is a Cargo workspace that talks to a running Odoo 19 from outside it:
+
+- **`hodoo`** (library) — typed `project.project`, `project.task`, task stages, tags,
+  milestones, subtasks, dependencies and chatter, over `POST /json/2/<model>/<method>`
+  with a per-user **API key** (Odoo 19 dropped XML-RPC and JSON-RPC). Anything the types
+  do not cover is one `call` away.
+- **`hodoo`** (CLI) — the same in a shell, printing JSON so scripts and agents can read
+  it. Credentials come from flags, the environment, or a `.env` at (or above) the working
+  directory.
+- **`scenarios/startup-founder.sh`** — builds a whole portfolio to play with: two client
+  websites, an internal product and personal life, asserting 46 properties as it goes.
+  `up`, `show`, `down`; `down` deletes only what it created.
+
+```sh
+# Rust 1.85 or newer (edition 2024). Debian 13's cargo/rustc is 1.85.1, which is
+# what the dependency tree asks for; rustup works too and resolved the committed
+# Cargo.lock.
+cd hodoo && cargo build && cargo test            # no server needed for tests
+export ODOO_URL=https://<server-ip>
+export ODOO_API_KEY=...                          # Preferences > Account Security > New API Key
+
+./target/debug/hodoo version                     # cheapest reachability check, needs no key
+./target/debug/hodoo whoami                      # proves url, certificate and key at once
+./target/debug/hodoo project ls
+./target/debug/hodoo task create --name "Write the copy" --project 1 --deadline 2026-12-01
+./scenarios/startup-founder.sh up                # or: just scenario up
+```
+
+Credentials never live in the repository: `.env*` is gitignored. The two suites that
+touch a real server (`tests/live.rs`, `tests/drift.rs`) are `#[ignore]`d until
+`HODOO_LIVE=1` is set. Full reference, including the Odoo 19 behaviours the client
+encodes, is in [`hodoo/README.md`](hodoo/README.md); `AGENTS.md` covers the same ground
+for agents working in this repo.
+
+### Why it exists next to the deploy
+
+The deploy keeps Odoo reachable and backed up; `hodoo` is how work gets *into* it without
+a browser. Both are versioned here so the server, the client and the API assumptions they
+share move together — the pinned `ODOO_COMMIT` in `deploy.sh` and the field lists in
+`crates/hodoo/src/*.rs` are the two ends of that.
 
 ## Why source, not the official .deb
 

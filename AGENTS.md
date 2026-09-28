@@ -20,6 +20,73 @@ No test framework exists and none is wanted. Verification is three-layered:
 `scripts/check.sh` (static, offline) → assertions at the end of `deploy.sh` (live) →
 `scripts/doctor.sh` (read-only health check of a deployed box).
 
+## Two projects in one repo
+
+1. **The deployment** (`deploy.sh`, `scripts/`, `configs/`, `README.md`) described in this
+   file's earlier sections. Shell and systemd; verified by `just check` / `just deploy` /
+   `just doctor`.
+2. **`hodoo/`**, a Rust workspace that talks to Odoo 19 over its JSON-2 API: a library
+   (`crates/hodoo`) plus a CLI (`crates/hodoo-cli`, binary `hodoo`). It is unrelated to
+   the deploy scripts, has its own `hodoo/README.md`, and is verified by Cargo. A
+   Topcoat web app (`hodoo-web`) is expected to join the workspace as a third member.
+
+### hodoo commands and toolchain
+
+Rust 1.98 is installed under `~/.cargo/bin`, which is **not on `PATH`** in a plain
+shell: run `~/.cargo/bin/cargo` or `export PATH="$HOME/.cargo/bin:$PATH"` first. All
+Cargo commands run from `hodoo/`.
+
+| Command | Does |
+|---|---|
+| `cargo test` | Unit tests, stub-HTTP tests (`tests/http.rs`, wiremock), doctests |
+| `cargo clippy --all-targets -- -D warnings` | The lint gate; `unwrap_used`/`expect_used` are warnings, so no unwrapping outside tests |
+| `cargo fmt --check` | Formatting (run `cargo fmt` to fix) |
+| `HODOO_LIVE=1 cargo test -- --ignored --nocapture` | The two ignored suites: `tests/live.rs` (creates and deletes real records) and `tests/drift.rs` (field names vs Odoo's `/doc-bearer/<model>.json`; needs a Settings-level key, otherwise it prints a skip) |
+
+Credentials resolve flag, then process environment (`ODOO_URL`, `ODOO_API_KEY`,
+`ODOO_DB`), then a `.env` at or above the working directory. This repo's `.env` holds
+`ODOO_API_KEY` (and `ODOO_URL`), is gitignored, and is read into a map rather than
+exported: `std::env::set_var` is unsafe in edition 2024 and the crate forbids unsafe
+code. The same layering is available to library callers as `Config::from_env()` plus
+`hodoo::dotenv`. JSON output uses **Odoo's** field names (`date_deadline`, `user_ids`,
+`privacy_visibility`, `type_ids`) in both directions, which is what `#[serde(rename)]`
+on the read structs is for.
+
+`hodoo/scenarios/startup-founder.sh {up|down|show}` (or `just scenario up`) builds a
+4-project dataset over the CLI, asserting 46 properties as it goes: two client websites, an
+internal product and personal life, with task stages, tags, milestones, subtasks, dependency
+chains, chatter and every state. Everything it creates carries a `(scenario)` marker, and
+`down` deletes by that marker only, so it can never touch Odoo's own records. `up` rebuilds
+from scratch (it runs `down` first) and `down` is safe to run twice. It needs the CLI built:
+`cargo build` in `hodoo/` first.
+
+`hodoo version --url <server>` needs no API key and is the cheapest way to check a
+server is reachable; `hodoo whoami` proves url, certificate and key together (it answers
+`res.users/context_get`, whose `uid` is the key's user). Failures exit `1`
+(Odoo/transport) or `2` (usage/config) with a JSON object on stderr; a field Odoo does
+not have comes back as `{"kind":"odoo","status":500,"message":"Invalid field ..."}`, so
+the escape hatch tells you when a model changed.
+
+### JSON-2 facts to know before touching `hodoo/`
+
+- The whole API is `POST /json/2/<model>/<method>`, `Authorization: Bearer <api key>`
+  (`auth='bearer'`), named arguments at the top level of the body plus optional `ids` and
+  `context`. `X-Odoo-Database` is only needed with several databases behind one domain,
+  so it is opt-in.
+- `create` takes `vals_list` and **answers a list of ids** (`[7]`), because JSON-2
+  reduces a returned recordset to its ids. Errors are `{name, message, arguments,
+  context, debug}` with a Python exception name and a real HTTP status.
+- Keys are per user and last at most three months. There is no password login over
+  JSON-2, so nothing here can fall back to one.
+- Odoo's own method discovery lives at `/doc` (browser) and `/doc-bearer/*.json`
+  (bearer); the latter needs `base.group_system`.
+- Odoo returns `false` (not `null`) for an unset `Char`/`Text`/`Html` field and answers
+  many2one as `[id, "Name"]`; `crates/hodoo/src/de.rs` is the one place that tolerates
+  both. Reads always send an explicit `fields` list, or Odoo returns every computed
+  column.
+- Only reads are retried (once, on a connection failure or 502/503/504), because this
+  deployment's Odoo is OOM-killable and JSON-2 has no idempotency key for writes.
+
 ## Commands
 
 `just` recipes are thin one-line wrappers around `deploy.sh` and `scripts/`;
