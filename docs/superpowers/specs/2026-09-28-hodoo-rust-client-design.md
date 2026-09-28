@@ -570,3 +570,12 @@ Left unwrapped on purpose: it is one `call` today. Wrapping it means adding
 `ProjectFields.is_template`, a `create_from_template` method whose `values` mirror the
 wizard's whitelist, and a template project in the scenario. Worth doing when a caller
 repeats a setup often enough to want it typed.
+
+## Superseded in part: the CLI (2026-09-28)
+
+The library in this document stands as built. The **CLI** it describes does not: the first
+version printed JSON for everything and took only ids, which is a script's interface, not a
+person's. It was reworked into a human-first CLI - tables, colours, human deadlines, names
+instead of ids, confirmations on deletes, a dry run, shell completions - with `-o json` kept
+as the machine contract. That work, and the guidelines behind each decision, is recorded in
+`2026-09-28-hodoo-cli-ux-design.md`.

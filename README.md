@@ -147,10 +147,18 @@ export ODOO_API_KEY=...                          # Preferences > Account Securit
 
 ./target/debug/hodoo version                     # cheapest reachability check, needs no key
 ./target/debug/hodoo whoami                      # proves url, certificate and key at once
-./target/debug/hodoo project ls
-./target/debug/hodoo task create --name "Write the copy" --project 1 --deadline 2026-12-01
+./target/debug/hodoo project ls                  # a table: customer, tasks open, end date
+./target/debug/hodoo board acme                  # the kanban, grouped by stage
+./target/debug/hodoo task create --name "Write the copy" --project acme --due +7d
+./target/debug/hodoo task ls --mine --overdue
 ./scenarios/startup-founder.sh up                # or: just scenario up
 ```
+
+Names work wherever an id does (`--project acme`, `--stage Review`, `--tag urgent`), and
+`--tag` creates a tag that does not exist yet. For scripts, `-o json` (or
+`HODOO_OUTPUT=json`) makes every command machine-readable; deletes need `-f` when nobody
+is there to answer the confirmation, and `-n` shows what a change would send without
+sending it.
 
 Credentials never live in the repository: `.env*` is gitignored. The two suites that
 touch a real server (`tests/live.rs`, `tests/drift.rs`) are `#[ignore]`d until

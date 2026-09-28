@@ -1,13 +1,51 @@
-//! The command-line surface.
+//! The command surface: names, flags, help text, examples.
+//!
+//! Nothing here talks to Odoo. It exists so that `hodoo --help`, `hodoo task create
+//! --help` and `hodoo help task` explain the tool without anyone reading a README,
+//! which is why every command carries an example and a sentence about what it does.
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap_complete::Shell;
 
-/// Manage Odoo 19 projects, tasks, stages, tags and milestones.
-///
-/// Every command prints JSON on stdout; errors are a JSON object on stderr.
-/// Credentials come from --url/--api-key or ODOO_URL/ODOO_API_KEY.
+/// What the top-level help says after the flags.
+const TOP_HELP: &str = "\
+Getting started:
+  hodoo version                          the server's Odoo version; no key needed
+  hodoo whoami                           who the key is, and on which server
+  hodoo project ls                       what is there
+  hodoo task create --name \"x\" --project acme
+
+Credentials, in order of precedence:
+  --url/--api-key/--db  ·  $ODOO_URL/$ODOO_API_KEY/$ODOO_DB  ·  a .env above the
+  working directory. Create a key in Odoo under Preferences > Account Security.
+
+Output:
+  A table for people, JSON for scripts. `-o json` (or HODOO_OUTPUT=json) makes every
+  command machine-readable; `--no-headers` drops table headers for awk and grep.
+  Errors and hints go to stderr; results go to stdout.
+
+Exit codes:
+  0 success · 1 the operation failed · 2 the invocation was wrong · 141 closed pipe
+
+References:
+  Anywhere a project, task, stage, milestone, user or tag is expected, an id or a
+  name works: `--project 49`, `--project acme`, `--stage Review`, `--tag urgent`.
+  A name that matches nothing says so; one that matches several lists them.";
+
+/// Manage Odoo 19 projects, tasks and everything around them.
 #[derive(Debug, Parser)]
-#[command(name = "hodoo", version, about, long_about = None)]
+#[command(
+    name = "hodoo",
+    version,
+    about = "Manage Odoo 19 projects, tasks, stages, milestones and tags",
+    long_about = "Talk to an Odoo 19 server over its JSON-2 API: projects, tasks, stages, \
+                  tags, milestones, subtasks, dependencies and chatter.\n\n\
+                  Reads are surgical (the client only asks for the fields it shows), writes \
+                  are one call each, and anything without a command of its own is one \
+                  `hodoo call` away.",
+    after_help = TOP_HELP,
+    arg_required_else_help = true
+)]
 pub struct Cli {
     #[command(flatten)]
     pub global: Global,
@@ -18,186 +56,348 @@ pub struct Cli {
 /// Options that apply to every command.
 #[derive(Debug, Args)]
 pub struct Global {
+    /// Output format: a table for people, json for scripts
+    #[arg(
+        short = 'o',
+        long,
+        value_name = "table|json",
+        env = "HODOO_OUTPUT",
+        global = true
+    )]
+    pub output: Option<String>,
+
+    /// Shorthand for -o json
+    #[arg(long, global = true)]
+    pub json: bool,
+
+    /// Colour: auto (default), always, never
+    #[arg(
+        long,
+        value_name = "auto|always|never",
+        env = "HODOO_COLOR",
+        global = true
+    )]
+    pub color: Option<String>,
+
+    /// Do not print table headers, for awk and grep
+    #[arg(long, global = true)]
+    pub no_headers: bool,
+
+    /// Indent JSON output
+    #[arg(long, global = true)]
+    pub pretty: bool,
+
+    /// Print only what was asked for: no confirmations, no hints
+    #[arg(short = 'q', long, global = true)]
+    pub quiet: bool,
+
+    /// Explain what is happening, and show Odoo's traceback on failure
+    #[arg(short = 'v', long, global = true)]
+    pub verbose: bool,
+
+    /// Show what a change would send, and send nothing
+    #[arg(short = 'n', long, global = true)]
+    pub dry_run: bool,
+
+    /// Never prompt; fail instead when an answer is needed
+    #[arg(long, global = true)]
+    pub no_input: bool,
+
     /// Odoo base URL, e.g. https://odoo.example.com
     #[arg(long, env = "ODOO_URL", global = true)]
     pub url: Option<String>,
-    /// API key of the Odoo user to act as, from Preferences > Account Security
+
+    /// API key of the user to act as: Preferences > Account Security > New API Key
     #[arg(long, env = "ODOO_API_KEY", global = true)]
     pub api_key: Option<String>,
+
     /// Send X-Odoo-Database; only needed with several databases behind one domain
     #[arg(long, env = "ODOO_DB", global = true)]
     pub db: Option<String>,
-    /// Accept a self-signed certificate
+
+    /// Accept a self-signed or otherwise invalid certificate
     #[arg(long, global = true)]
     pub insecure: bool,
+
     /// Do not retry a read after a connection failure or a 502
     #[arg(long, global = true)]
     pub no_retry: bool,
+
     /// Per-request timeout, in seconds
     #[arg(long, global = true, default_value_t = 30)]
     pub timeout: u64,
-    /// Indent the JSON output
-    #[arg(long, global = true)]
-    pub pretty: bool,
-    /// Print Odoo's Python traceback when a call fails
-    #[arg(long, short = 'v', global = true)]
-    pub verbose: bool,
 }
 
 /// What to do.
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Show the user this API key acts as
+    /// Show the user this API key acts as, and the server it reaches
+    #[command(
+        long_about = "Shows the user behind the API key plus the server's Odoo \
+                            version, so a first run proves url, certificate and key in one \
+                            go.\n\nExamples:\n  hodoo whoami\n  hodoo whoami -o json"
+    )]
     Whoami,
+
     /// Show the server's Odoo version; needs no API key
     Version,
+
     /// Projects
     #[command(subcommand)]
     Project(ProjectCmd),
+
     /// Tasks
     #[command(subcommand)]
     Task(TaskCmd),
-    /// Task stages
+
+    /// Task stages (the columns of a kanban)
     #[command(subcommand)]
     Stage(StageCmd),
+
     /// Milestones
     #[command(subcommand)]
     Milestone(MilestoneCmd),
+
     /// Tags
     #[command(subcommand)]
     Tag(TagCmd),
-    /// Call any model method directly, e.g. `hodoo call res.partner search_read --json '{...}'`
+
+    /// Every open task of a project, grouped by stage
+    #[command(
+        long_about = "The kanban a founder actually looks at: one line per stage, the \
+                            tasks in it, soonest deadline first.\n\nExamples:\n  hodoo board\n  \
+                            hodoo board acme\n  hodoo board 49 --mine"
+    )]
+    Board(BoardArgs),
+
+    /// Call any Odoo model method; the escape hatch for what has no command
+    #[command(
+        long_about = "POSTs to /json/2/<model>/<method> with the body you give. Use it \
+                            for models and methods hodoo does not wrap, and for rollups \
+                            (search_count, read_group).\n\nExamples:\n  hodoo call res.partner \
+                            search_read --body '{\"domain\":[],\"fields\":[\"name\"]}'\n  hodoo call \
+                            project.task search_count --body '{\"domain\":[[\"is_closed\",\"=\",false]]}'\n  \
+                            hodoo call project.task write --ids 31 --body '{\"vals\":{\"priority\":\"3\"}}'"
+    )]
     Call(CallArgs),
+
+    /// Print a shell completion script
+    #[command(
+        long_about = "Prints a completion script for the given shell.\n\nExamples:\n  \
+                            hodoo completions bash > ~/.local/share/bash-completion/completions/hodoo\n  \
+                            hodoo completions zsh > ~/.zfunc/_hodoo"
+    )]
+    Completions(CompletionsArgs),
 }
 
 /// Project commands.
 #[derive(Debug, Subcommand)]
 pub enum ProjectCmd {
     /// List projects
+    #[command(
+        long_about = "Lists projects as a table: customer, manager, visibility, how \
+                            many tasks are open, and when they end.\n\nExamples:\n  hodoo project \
+                            ls\n  hodoo project ls --mine\n  hodoo project ls --customer acme \
+                            --json"
+    )]
     Ls(ProjectLsArgs),
-    /// Show one project
-    Get {
-        /// Project id
-        id: i64,
+
+    /// Show one project: dates, stages, counts and recent chatter
+    #[command(
+        long_about = "Everything about one project on one screen.\n\nExamples:\n  hodoo \
+                            project show acme\n  hodoo project show 49"
+    )]
+    Show {
+        /// Project id or name
+        #[arg(value_name = "PROJECT")]
+        project: String,
     },
-    /// Create a project
+
+    /// Create a project, optionally from a template
+    #[command(
+        long_about = "Creates a project. With --template the project is copied from a \
+                            template: tasks, subtasks, stages, tags and dependencies come \
+                            along, the dates shift to keep the template's duration, and the \
+                            customer is never copied unless you pass --customer.\n\nExamples:\n  \
+                            hodoo project create --name \"Acme website\" --customer acme\n  hodoo \
+                            project create --name \"Nordwind site\" --template website \
+                            --start 2026-11-02"
+    )]
     Create(ProjectCreateArgs),
-    /// Update a project
+
+    /// Change a project; only the flags you pass change
+    #[command(
+        long_about = "Examples:\n  hodoo project update acme --visibility employees \
+                            --end 2026-12-20\n  hodoo project update 49 --milestones \
+                            --dependencies"
+    )]
     Update {
-        /// Project id
-        id: i64,
+        /// Project id or name
+        #[arg(value_name = "PROJECT")]
+        project: String,
         #[command(flatten)]
         fields: ProjectFieldArgs,
     },
-    /// Delete a project and everything Odoo cascades from it
+
+    /// Delete a project, its tasks, its chatter and its milestones
+    #[command(
+        long_about = "Deletes the project and everything Odoo cascades from it. Asks \
+                            first, unless -f/--force is passed or stdin is not a terminal (a \
+                            script must pass -f on purpose).\n\nExamples:\n  hodoo project rm \
+                            acme\n  hodoo project rm 49 -f"
+    )]
     Rm {
-        /// Project id
-        id: i64,
+        /// Project id or name
+        #[arg(value_name = "PROJECT")]
+        project: String,
+        /// Do not ask; delete
+        #[arg(short = 'f', long)]
+        force: bool,
     },
-    /// List the task stages attached to a project
+
+    /// The task stages attached to a project, with what is in each
+    #[command(
+        long_about = "Shows the project's stages in order, how many open tasks each \
+                            holds, and whether it is folded.\n\nExamples:\n  hodoo project \
+                            stages acme"
+    )]
     Stages {
-        /// Project id
-        id: i64,
+        /// Project id or name
+        #[arg(value_name = "PROJECT")]
+        project: String,
     },
-    /// Attach task stages to a project, keeping the ones already there
-    AttachStage {
-        /// Project id
-        id: i64,
-        /// Stage id, repeatable
-        #[arg(long = "stage", value_name = "ID", required = true)]
-        stages: Vec<i64>,
+
+    /// Attach a shared task stage to a project
+    #[command(
+        long_about = "A task can only sit in a stage its project offers, so a stage \
+                            shared with another project has to be attached first.\n\nExamples:\n  \
+                            hodoo project attach acme --stage Review"
+    )]
+    Attach {
+        /// Project id or name
+        #[arg(value_name = "PROJECT")]
+        project: String,
+        /// Stage id or name; repeatable
+        #[arg(long = "stage", value_name = "STAGE", required = true)]
+        stages: Vec<String>,
     },
-    /// Detach task stages from a project
-    DetachStage {
-        /// Project id
-        id: i64,
-        /// Stage id, repeatable
-        #[arg(long = "stage", value_name = "ID", required = true)]
-        stages: Vec<i64>,
+
+    /// Detach a task stage from a project
+    #[command(
+        long_about = "Removes the stage from this project only; tasks already in it \
+                            stay where they are.\n\nExamples:\n  hodoo project detach acme \
+                            --stage Review"
+    )]
+    Detach {
+        /// Project id or name
+        #[arg(value_name = "PROJECT")]
+        project: String,
+        /// Stage id or name; repeatable
+        #[arg(long = "stage", value_name = "STAGE", required = true)]
+        stages: Vec<String>,
     },
+
     /// Post a message on a project's chatter
+    #[command(
+        long_about = "Plain text; Odoo escapes it. --internal keeps it to internal \
+                            users.\n\nExamples:\n  hodoo project comment acme --body \"Kickoff \
+                            done\" --internal"
+    )]
     Comment {
-        /// Project id
-        id: i64,
-        /// Message text; Odoo escapes it
-        #[arg(long)]
+        /// Project id or name
+        #[arg(value_name = "PROJECT")]
+        project: String,
+        /// The message
+        #[arg(long, value_name = "TEXT")]
         body: String,
-        /// An internal note instead of a comment
+        /// A note only internal users see, instead of a comment
         #[arg(long)]
         internal: bool,
     },
 }
 
-/// Project listing filters.
+/// Filters for `project ls`.
 #[derive(Debug, Args)]
 pub struct ProjectLsArgs {
-    /// Substring of the name, case-insensitive
-    #[arg(long)]
+    /// Only projects whose name contains this
+    #[arg(value_name = "TEXT")]
     pub name: Option<String>,
-    /// Customer (res.partner id)
+    /// Only projects for this customer (id or name)
+    #[arg(long, value_name = "CONTACT")]
+    pub customer: Option<String>,
+    /// Only projects this user manages (id, login or name)
+    #[arg(long, value_name = "USER")]
+    pub manager: Option<String>,
+    /// Only projects in this stage (id or name)
+    #[arg(long, value_name = "STAGE")]
+    pub stage: Option<String>,
+    /// Only projects carrying this tag; repeatable
+    #[arg(long = "tag", value_name = "TAG")]
+    pub tags: Vec<String>,
+    /// Only projects I manage
     #[arg(long)]
-    pub customer: Option<i64>,
-    /// Project manager (res.users id)
-    #[arg(long)]
-    pub manager: Option<i64>,
-    /// Project stage (project.project.stage id)
-    #[arg(long)]
-    pub stage: Option<i64>,
-    /// Tag id, repeatable: projects carrying any of them
-    #[arg(long = "tag", value_name = "ID")]
-    pub tags: Vec<i64>,
-    /// Odoo order string, e.g. "name"
-    #[arg(long)]
+    pub mine: bool,
+    /// Odoo order string, e.g. "name desc"
+    #[arg(long, value_name = "ORDER")]
     pub order: Option<String>,
-    /// Maximum records; 0 means no limit
-    #[arg(long, default_value_t = 50)]
+    /// Maximum rows; 0 means all
+    #[arg(short = 'l', long, default_value_t = 50)]
     pub limit: u32,
-    /// Records to skip
+    /// Rows to skip
     #[arg(long, default_value_t = 0)]
     pub offset: u32,
 }
 
-/// Fields shared by project create and update.
+/// Fields shared by `project create` and `project update`.
 #[derive(Debug, Args, Default)]
 pub struct ProjectFieldArgs {
-    /// Customer (res.partner id)
-    #[arg(long)]
-    pub customer: Option<i64>,
-    /// Project manager (res.users id)
-    #[arg(long)]
-    pub manager: Option<i64>,
-    /// Project stage (project.project.stage id)
-    #[arg(long)]
-    pub stage: Option<i64>,
-    /// Description, as HTML
-    #[arg(long)]
-    pub description: Option<String>,
-    /// Who can reach the project
-    #[arg(long, value_enum)]
+    /// Who may reach the project: followers, invited-users, employees, portal
+    #[arg(long, value_name = "VISIBILITY")]
     pub visibility: Option<VisibilityArg>,
-    /// Tag id, repeatable: replaces the project's tags
-    #[arg(long = "tag", value_name = "ID")]
-    pub tags: Vec<i64>,
-    /// Start date, YYYY-MM-DD
-    #[arg(long)]
-    pub date_start: Option<String>,
-    /// Expiration date, YYYY-MM-DD
-    #[arg(long)]
-    pub date: Option<String>,
+    /// Customer (id or name)
+    #[arg(long, value_name = "CONTACT")]
+    pub customer: Option<String>,
+    /// Project manager (id, login or name)
+    #[arg(long, value_name = "USER")]
+    pub manager: Option<String>,
+    /// Project stage, e.g. "In Progress"
+    #[arg(long, value_name = "STAGE")]
+    pub stage: Option<String>,
+    /// Description, as HTML
+    #[arg(long, value_name = "HTML")]
+    pub description: Option<String>,
+    /// Tag (name or id); repeatable: replaces the project's tags
+    #[arg(long = "tag", value_name = "TAG")]
+    pub tags: Vec<String>,
+    /// Start date, e.g. 2026-11-02
+    #[arg(long, value_name = "DATE")]
+    pub start: Option<String>,
+    /// End date, e.g. 2026-12-20
+    #[arg(long, value_name = "DATE")]
+    pub end: Option<String>,
     /// Use milestones on this project
+    #[arg(long, overrides_with = "no_milestones")]
+    pub milestones: bool,
+    /// Turn milestones off
     #[arg(long)]
-    pub allow_milestones: bool,
-    /// Use task dependencies on this project
+    pub no_milestones: bool,
+    /// Use task dependencies ("blocked by") on this project
+    #[arg(long, overrides_with = "no_dependencies")]
+    pub dependencies: bool,
+    /// Turn task dependencies off
     #[arg(long)]
-    pub allow_task_dependencies: bool,
+    pub no_dependencies: bool,
 }
 
 /// Project creation.
 #[derive(Debug, Args)]
 pub struct ProjectCreateArgs {
     /// Project name
-    #[arg(long)]
+    #[arg(long, value_name = "NAME")]
     pub name: String,
+    /// Copy this project template instead of starting empty
+    #[arg(long, value_name = "TEMPLATE")]
+    pub template: Option<String>,
     #[command(flatten)]
     pub fields: ProjectFieldArgs,
 }
@@ -207,11 +407,11 @@ pub struct ProjectCreateArgs {
 pub enum VisibilityArg {
     /// Invited internal users only
     Followers,
-    /// Invited internal and portal users
+    /// Invited internal users and portal users
     InvitedUsers,
     /// All internal users
     Employees,
-    /// All internal users and invited portal users
+    /// All internal users, plus invited portal users
     Portal,
 }
 
@@ -219,150 +419,231 @@ pub enum VisibilityArg {
 #[derive(Debug, Subcommand)]
 pub enum TaskCmd {
     /// List tasks
+    #[command(
+        long_about = "Lists tasks as a table, soonest deadline first. Filters take \
+                            names or ids.\n\nExamples:\n  hodoo task ls --project acme --open\n  \
+                            hodoo task ls --mine --overdue\n  hodoo task ls --due-before +7d\n  \
+                            hodoo task ls --tag urgent --json"
+    )]
     Ls(TaskLsArgs),
-    /// Show one task
-    Get {
-        /// Task id
-        id: i64,
+
+    /// Show one task: state, who, when, what blocks it, and recent chatter
+    #[command(
+        long_about = "Everything about one task on one screen, including what it waits \
+                            on and the last few chatter entries.\n\nExamples:\n  hodoo task show \
+                            31\n  hodoo task show \"Build the CMS integration\""
+    )]
+    Show {
+        /// Task id or name
+        #[arg(value_name = "TASK")]
+        task: String,
     },
+
     /// Create a task
+    #[command(
+        long_about = "Odoo assigns the calling user to a new task unless an assignee is \
+                            given. --depends-on makes the task wait for another one.\n\nExamples:\n  \
+                            hodoo task create --name \"Write the copy\" --project acme --assignee \
+                            me --due +7d --priority high --tag client\n  hodoo task create --name \
+                            \"Audit\" --project acme --depends-on \"Homepage build\""
+    )]
     Create(TaskCreateArgs),
-    /// Update a task
+
+    /// Change a task; only the flags you pass change
+    #[command(
+        long_about = "Examples:\n  hodoo task update 31 --priority urgent --due today\n  \
+                            hodoo task update 31 --unassign\n  hodoo task update 31 --tag \
+                            urgent"
+    )]
     Update {
-        /// Task id
-        id: i64,
+        /// Task id or name
+        #[arg(value_name = "TASK")]
+        task: String,
         #[command(flatten)]
         fields: TaskFieldArgs,
     },
-    /// Delete a task
-    Rm {
-        /// Task id
-        id: i64,
-    },
+
     /// Mark a task done
+    #[command(long_about = "Examples:\n  hodoo task done 31")]
     Done {
-        /// Task id
-        id: i64,
+        /// Task id or name
+        #[arg(value_name = "TASK")]
+        task: String,
     },
-    /// Mark a task canceled
+
+    /// Cancel a task
+    #[command(long_about = "Examples:\n  hodoo task cancel 31")]
     Cancel {
-        /// Task id
-        id: i64,
+        /// Task id or name
+        #[arg(value_name = "TASK")]
+        task: String,
     },
+
+    /// Put a task back in progress
+    #[command(long_about = "Examples:\n  hodoo task reopen 31")]
+    Reopen {
+        /// Task id or name
+        #[arg(value_name = "TASK")]
+        task: String,
+    },
+
+    /// Move a task to another stage
+    #[command(long_about = "Examples:\n  hodoo task move 31 --stage Review")]
+    Move {
+        /// Task id or name
+        #[arg(value_name = "TASK")]
+        task: String,
+        /// Where to move it: a stage name within its project, or an id
+        #[arg(long, value_name = "STAGE", required = true)]
+        stage: String,
+    },
+
     /// Post a message on a task's chatter
+    #[command(
+        long_about = "Plain text; Odoo escapes it. --internal keeps it to internal \
+                            users.\n\nExamples:\n  hodoo task comment 31 --body \"blocked on the \
+                            certificate\" --internal"
+    )]
     Comment {
-        /// Task id
-        id: i64,
-        /// Message text; Odoo escapes it
-        #[arg(long)]
+        /// Task id or name
+        #[arg(value_name = "TASK")]
+        task: String,
+        /// The message
+        #[arg(long, value_name = "TEXT")]
         body: String,
-        /// An internal note instead of a comment
+        /// A note only internal users see, instead of a comment
         #[arg(long)]
         internal: bool,
     },
+
     /// Show a task's chatter
+    #[command(long_about = "Examples:\n  hodoo task messages 31 --limit 5")]
     Messages {
-        /// Task id
-        id: i64,
-        /// Maximum messages, oldest first
-        #[arg(long, default_value_t = 20)]
+        /// Task id or name
+        #[arg(value_name = "TASK")]
+        task: String,
+        /// How many, newest last
+        #[arg(short = 'l', long, default_value_t = 20)]
         limit: u32,
     },
-    /// Show the tasks a task waits on
+
+    /// What a task waits on, and what waits on it
+    #[command(long_about = "Examples:\n  hodoo task deps 31")]
     Deps {
-        /// Task id
-        id: i64,
+        /// Task id or name
+        #[arg(value_name = "TASK")]
+        task: String,
+    },
+
+    /// Delete a task
+    #[command(
+        long_about = "Asks first unless -f/--force is passed.\n\nExamples:\n  hodoo task rm \
+                            31 -f"
+    )]
+    Rm {
+        /// Task id or name
+        #[arg(value_name = "TASK")]
+        task: String,
+        /// Do not ask; delete
+        #[arg(short = 'f', long)]
+        force: bool,
     },
 }
 
-/// Task listing filters.
+/// Filters for `task ls`.
 #[derive(Debug, Args)]
 pub struct TaskLsArgs {
-    /// Only this project
+    /// Only tasks of this project
+    #[arg(long, value_name = "PROJECT")]
+    pub project: Option<String>,
+    /// Only tasks in this stage
+    #[arg(long, value_name = "STAGE")]
+    pub stage: Option<String>,
+    /// Only tasks assigned to this user
+    #[arg(long, value_name = "USER")]
+    pub assignee: Option<String>,
+    /// Only tasks assigned to me
     #[arg(long)]
-    pub project: Option<i64>,
-    /// Only this stage
-    #[arg(long)]
-    pub stage: Option<i64>,
-    /// Only this assignee (res.users id)
-    #[arg(long)]
-    pub assignee: Option<i64>,
-    /// Only tasks that are not done or canceled
+    pub mine: bool,
+    /// Only tasks that are neither done nor canceled
     #[arg(long)]
     pub open: bool,
-    /// Only this state
-    #[arg(long, value_enum)]
+    /// Only tasks in this state
+    #[arg(long, value_name = "STATE")]
     pub state: Option<StateArg>,
-    /// Substring of the title, case-insensitive
-    #[arg(long)]
+    /// Only tasks whose name contains this
+    #[arg(value_name = "TEXT")]
     pub name: Option<String>,
-    /// Tag id, repeatable: tasks carrying any of them
-    #[arg(long = "tag", value_name = "ID")]
-    pub tags: Vec<i64>,
-    /// Only tasks due before this date or datetime
+    /// Only tasks carrying this tag; repeatable
+    #[arg(long = "tag", value_name = "TAG")]
+    pub tags: Vec<String>,
+    /// Only tasks due before this: today, +7d, 2026-12-01
+    #[arg(long, value_name = "WHEN")]
+    pub due_before: Option<String>,
+    /// Only tasks whose deadline has passed
     #[arg(long)]
-    pub deadline_before: Option<String>,
+    pub overdue: bool,
     /// Only subtasks of this task
-    #[arg(long)]
-    pub parent: Option<i64>,
-    /// Odoo order string, e.g. "priority desc, date_deadline"
-    #[arg(long)]
+    #[arg(long, value_name = "TASK")]
+    pub parent: Option<String>,
+    /// Odoo order string, e.g. "priority desc"
+    #[arg(long, value_name = "ORDER")]
     pub order: Option<String>,
-    /// Maximum records; 0 means no limit
-    #[arg(long, default_value_t = 50)]
+    /// Maximum rows; 0 means all
+    #[arg(short = 'l', long, default_value_t = 50)]
     pub limit: u32,
-    /// Records to skip
+    /// Rows to skip
     #[arg(long, default_value_t = 0)]
     pub offset: u32,
 }
 
-/// Fields shared by task create and update.
+/// Fields shared by `task create` and `task update`.
 #[derive(Debug, Args, Default)]
 pub struct TaskFieldArgs {
-    /// Project id
-    #[arg(long)]
-    pub project: Option<i64>,
-    /// Stage id, which must be attached to the project
-    #[arg(long)]
-    pub stage: Option<i64>,
+    /// Project (id or name)
+    #[arg(long, value_name = "PROJECT")]
+    pub project: Option<String>,
+    /// Stage (id, or a name within the project)
+    #[arg(long, value_name = "STAGE")]
+    pub stage: Option<String>,
     /// State
-    #[arg(long, value_enum)]
+    #[arg(long, value_name = "STATE")]
     pub state: Option<StateArg>,
-    /// Priority
-    #[arg(long, value_enum)]
+    /// Priority: low, medium, high, urgent
+    #[arg(long, value_name = "PRIORITY")]
     pub priority: Option<PriorityArg>,
-    /// Assignee (res.users id), repeatable; replaces the assignees
-    #[arg(long = "assignee", value_name = "ID")]
-    pub assignees: Vec<i64>,
-    /// Clear the assignees (Odoo assigns the calling user on create otherwise)
+    /// Assignee (id, login or name); repeatable: replaces the assignees
+    #[arg(long = "assignee", value_name = "USER")]
+    pub assignees: Vec<String>,
+    /// Drop every assignee
     #[arg(long, conflicts_with = "assignees")]
     pub unassign: bool,
-    /// Customer contact (res.partner id)
-    #[arg(long)]
-    pub customer: Option<i64>,
-    /// Deadline, YYYY-MM-DD or YYYY-MM-DD HH:MM:SS (UTC)
-    #[arg(long)]
-    pub deadline: Option<String>,
+    /// Customer contact (id or name)
+    #[arg(long, value_name = "CONTACT")]
+    pub customer: Option<String>,
+    /// Deadline: today, +3d, 2026-12-01 or "2026-12-01 09:00"
+    #[arg(long, value_name = "WHEN")]
+    pub due: Option<String>,
     /// Planned hours
-    #[arg(long)]
-    pub allocated_hours: Option<f64>,
-    /// Tag id, repeatable; replaces the task's tags
-    #[arg(long = "tag", value_name = "ID")]
-    pub tags: Vec<i64>,
-    /// Clear the task's tags
+    #[arg(long, value_name = "HOURS")]
+    pub hours: Option<f64>,
+    /// Tag (name or id); repeatable: replaces the task's tags
+    #[arg(long = "tag", value_name = "TAG")]
+    pub tags: Vec<String>,
+    /// Drop every tag
     #[arg(long, conflicts_with = "tags")]
     pub clear_tags: bool,
-    /// Parent task id, making this a subtask
-    #[arg(long)]
-    pub parent: Option<i64>,
-    /// Milestone id
-    #[arg(long)]
-    pub milestone: Option<i64>,
-    /// Task id this one waits on, repeatable; replaces the dependencies
-    #[arg(long = "depends-on", value_name = "ID")]
-    pub depends_on: Vec<i64>,
+    /// Make this a subtask of that task (id or name)
+    #[arg(long, value_name = "TASK")]
+    pub parent: Option<String>,
+    /// Wait for that task (id or name); repeatable
+    #[arg(long = "depends-on", value_name = "TASK")]
+    pub depends_on: Vec<String>,
+    /// Milestone (id, or a name within the project)
+    #[arg(long, value_name = "MILESTONE")]
+    pub milestone: Option<String>,
     /// Description, as HTML
-    #[arg(long)]
+    #[arg(long, value_name = "HTML")]
     pub description: Option<String>,
 }
 
@@ -370,31 +651,31 @@ pub struct TaskFieldArgs {
 #[derive(Debug, Args)]
 pub struct TaskCreateArgs {
     /// Task title
-    #[arg(long)]
+    #[arg(long, value_name = "NAME")]
     pub name: String,
     #[command(flatten)]
     pub fields: TaskFieldArgs,
 }
 
-/// Task states.
-#[derive(Debug, Clone, Copy, ValueEnum)]
+/// Task states, as Odoo spells them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum StateArg {
-    /// In progress
+    /// Being worked on
     InProgress,
-    /// Changes requested
+    /// Waiting for changes
     ChangesRequested,
-    /// Approved
+    /// Approved, not started
     Approved,
-    /// Done
+    /// Finished
     Done,
-    /// Canceled
+    /// Dropped
     Canceled,
-    /// Waiting
+    /// Waiting, usually because something it depends on is open
     Waiting,
 }
 
 /// Task priorities.
-#[derive(Debug, Clone, Copy, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum PriorityArg {
     /// Low
     Low,
@@ -410,26 +691,34 @@ pub enum PriorityArg {
 #[derive(Debug, Subcommand)]
 pub enum StageCmd {
     /// List task stages
+    #[command(long_about = "Examples:\n  hodoo stage ls\n  hodoo stage ls --project acme")]
     Ls {
-        /// Only stages attached to this project
-        #[arg(long)]
-        project: Option<i64>,
-        /// Maximum records; 0 means no limit
-        #[arg(long, default_value_t = 50)]
+        /// Only stages attached to this project (id or name)
+        #[arg(long, value_name = "PROJECT")]
+        project: Option<String>,
+        /// Maximum rows; 0 means all
+        #[arg(short = 'l', long, default_value_t = 50)]
         limit: u32,
     },
-    /// Create a task stage, attached to a project when --project is given
+
+    /// Create a task stage, attached to a project by default
+    #[command(
+        long_about = "A stage belongs to a project: without --project it is created \
+                            unattached and no task can use it, so pass the project unless you \
+                            mean to share the stage later.\n\nExamples:\n  hodoo stage create \
+                            --name \"Review\" --project acme --sequence 40"
+    )]
     Create {
         /// Stage name
-        #[arg(long)]
+        #[arg(long, value_name = "NAME")]
         name: String,
-        /// Project id; without it the stage belongs to no project and no task can use it
-        #[arg(long)]
-        project: Option<i64>,
-        /// Kanban order
-        #[arg(long)]
+        /// Attach the new stage to this project (id or name)
+        #[arg(long, value_name = "PROJECT")]
+        project: Option<String>,
+        /// Sort order within the kanban
+        #[arg(long, value_name = "N")]
         sequence: Option<i64>,
-        /// Fold it in the kanban
+        /// Fold the stage in the kanban, for the end of the line
         #[arg(long)]
         fold: bool,
     },
@@ -439,35 +728,56 @@ pub enum StageCmd {
 #[derive(Debug, Subcommand)]
 pub enum MilestoneCmd {
     /// List a project's milestones
+    #[command(long_about = "Examples:\n  hodoo milestone ls --project acme")]
     Ls {
-        /// Project id
-        #[arg(long)]
-        project: i64,
+        /// Project (id or name)
+        #[arg(long, value_name = "PROJECT")]
+        project: String,
     },
+
     /// Create a milestone
+    #[command(
+        long_about = "The project has to allow milestones; `hodoo project update \
+                            --milestones` turns that on.\n\nExamples:\n  hodoo milestone create \
+                            --project acme --name \"Beta\" --due 2026-12-01"
+    )]
     Create {
-        /// Project id
-        #[arg(long)]
-        project: i64,
+        /// Project (id or name)
+        #[arg(long, value_name = "PROJECT")]
+        project: String,
         /// Milestone name
-        #[arg(long)]
+        #[arg(long, value_name = "NAME")]
         name: String,
-        /// Deadline, YYYY-MM-DD
-        #[arg(long)]
-        deadline: Option<String>,
+        /// Deadline, e.g. 2026-12-01
+        #[arg(long, value_name = "WHEN")]
+        due: Option<String>,
     },
-    /// Mark a milestone reached, or not reached
+
+    /// Mark a milestone reached, or unreached
+    #[command(
+        long_about = "Examples:\n  hodoo milestone reached 12\n  hodoo milestone reached 12 \
+                            --undo"
+    )]
     Reached {
         /// Milestone id
-        id: i64,
-        /// Mark it unreached instead
+        #[arg(value_name = "MILESTONE")]
+        milestone: i64,
+        /// Mark it unreached again
         #[arg(long)]
         undo: bool,
     },
+
     /// Delete a milestone
+    #[command(
+        long_about = "Asks first unless -f/--force is passed.\n\nExamples:\n  hodoo                             milestone rm 12 -f"
+    )]
     Rm {
         /// Milestone id
-        id: i64,
+        #[arg(value_name = "MILESTONE")]
+        milestone: i64,
+        /// Do not ask; delete
+        #[arg(short = 'f', long)]
+        force: bool,
     },
 }
 
@@ -475,25 +785,48 @@ pub enum MilestoneCmd {
 #[derive(Debug, Subcommand)]
 pub enum TagCmd {
     /// List tags
+    #[command(
+        long_about = "Tags are created on demand by `--tag` on a task or project, so \
+                            there is nothing to create here.\n\nExamples:\n  hodoo tag ls"
+    )]
     Ls,
-    /// The id of a tag by exact name, creating it if it does not exist
-    Ensure {
-        /// Tag name
-        name: String,
-    },
 }
 
-/// A raw JSON-2 call.
+/// `hodoo board`.
+#[derive(Debug, Args)]
+pub struct BoardArgs {
+    /// Project (id or name); omit it to see every project
+    #[arg(value_name = "PROJECT")]
+    pub project: Option<String>,
+    /// Only tasks assigned to me
+    #[arg(long)]
+    pub mine: bool,
+    /// Include finished tasks
+    #[arg(long)]
+    pub all: bool,
+}
+
+/// `hodoo call`.
 #[derive(Debug, Args)]
 pub struct CallArgs {
     /// Odoo model, e.g. project.task
+    #[arg(value_name = "MODEL")]
     pub model: String,
     /// Method, e.g. search_read
+    #[arg(value_name = "METHOD")]
     pub method: String,
-    /// Arguments, as a JSON object
-    #[arg(long)]
-    pub json: Option<String>,
-    /// Record ids to run the method on, comma separated
-    #[arg(long, value_delimiter = ',')]
+    /// Named arguments, as a JSON object
+    #[arg(long, value_name = "JSON")]
+    pub body: Option<String>,
+    /// Record ids to run it on, comma separated
+    #[arg(long, value_delimiter = ',', value_name = "ID,ID")]
     pub ids: Vec<i64>,
+}
+
+/// `hodoo completions`.
+#[derive(Debug, Args)]
+pub struct CompletionsArgs {
+    /// Which shell to print a completion script for
+    #[arg(value_name = "SHELL")]
+    pub shell: Shell,
 }

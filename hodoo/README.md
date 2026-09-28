@@ -31,46 +31,107 @@ test) the user needs the Settings group.
 
 ## CLI
 
+The CLI is for people first: tables, colour, human dates, names instead of ids. JSON
+is one flag away for scripts. Everything below works with a name wherever it says a
+project, task, stage, milestone, user or tag.
+
 ```sh
-# Either export them, or put them in a .env at (or above) the working
-# directory -- a .env at the repository root covers every command below.
+# Either export them, or put them in a .env at (or above) the working directory --
+# a .env at the repository root covers every command below.
 export ODOO_URL=https://odoo.example.com
 export ODOO_API_KEY=...
 
-hodoo version                 # needs no key at all
-hodoo whoami                  # proves url, certificate and key in one call
-hodoo project ls --name website --limit 10
-hodoo project create --name "Website" --allow-milestones --allow-task-dependencies
-hodoo stage create --name "Backlog" --project 7      # attached to the project
-hodoo task create --name "Write the copy" --project 7 --stage 12 \
-    --assignee 2 --deadline 2026-12-01 --priority high --tag 4
-hodoo task ls --project 7 --open --order "priority desc"
-hodoo task comment 31 --body "blocked on the certificate" --internal
-hodoo task deps 31
+hodoo version                       # needs no key at all
+hodoo whoami                        # proves url, certificate and key in one call
+hodoo project ls                    # what is there, as a table
+hodoo project ls --mine
+hodoo project create --name "Acme website" --customer acme --milestones
+hodoo stage create --name "Review" --project acme --sequence 40
+hodoo task create --name "Write the copy" --project acme --stage Backlog \
+    --assignee me --due +7d --priority high --tag client
+hodoo task ls --project acme --open
+hodoo board acme                    # the kanban, grouped by stage
+hodoo task show 31                  # state, who, when, what blocks it, chatter
+hodoo task move 31 --stage Review
 hodoo task done 31
-hodoo call res.partner search_read --json '{"domain":[],"fields":["name"]}'
+hodoo task comment 31 --body "blocked on the certificate" --internal
+hodoo task deps 31                  # what it waits on, and what waits on it
+hodoo call res.partner search_read --body '{"domain":[],"fields":["name"]}'
+hodoo completions bash > ~/.local/share/bash-completion/completions/hodoo
 ```
+
+What it looks like:
+
+```text
+$ hodoo task ls --project acme --open
+ ID  PRI     STAGE   NAME                        WHO              DUE
+ 22  high    Design  Design the homepage         Hanz             in 5d
+ 23  medium  Build   Build the CMS integration   Hanz             2d ago
+ 24  low     Build   Write the launch email      -                -
+
+$ hodoo board acme
+Acme Manufacturing - Website (scenario) (#83)  6 open of 8
+  Backlog (scenario)          0
+  Design (scenario)           2  #350 Wireframes for all 8 pages (high, in 5d) · #354 Mobile breakpoints (medium, no date)
+  Review (scenario)           3  #355 Client review call (high, in 3d) · #352 Product page build (high, in 18d)
+```
+
+### Output modes
+
+| | |
+|---|---|
+| default | a table for people; colour only when stdout is a terminal |
+| `-o json`, `--json` | the contract for scripts: Odoo's field names, every field read, no colour, errors as JSON on stderr |
+| `HODOO_OUTPUT=json` | the same, set once for a session or a whole script |
+| `--no-headers` | table without headers, so `awk '{print $1}'` and `grep` work |
+| `HODOO_COLOR=never`, `NO_COLOR`, `--color never` | no colour (also off when the output is piped, or `TERM=dumb`) |
+| `--pretty` | indent the JSON |
+
+stdout carries the result; notes, hints and errors go to stderr, so a pipe sees only
+what you asked for. In JSON mode a change reports itself there too: `task create`
+answers `{"id":31}`, other changes `{"id":31,"ok":true}`, a delete
+`{"deleted":31,"ok":true}` — `id=$(hodoo task create … -o json | jq .id)` works.
+
+Exit codes: `0` success, `1` the operation failed (Odoo or transport), `2` the
+invocation was wrong (bad flag, unknown reference, a delete without confirmation), and
+`141` for a closed pipe (`hodoo task ls | head`).
+
+### Habits worth knowing
+
+- **Anything asked for by name is resolved, not guessed.** A name that matches nothing
+  is an error with a suggestion; one that matches several is an error that lists them,
+  because a guess here writes to the wrong record.
+- **Deletes ask first.** `project rm`, `task rm` and `milestone rm` prompt when stdin is
+  a terminal; a script has to say `-f`/`--force` (or use `--no-input` to be told so).
+- **`-n`/`--dry-run` shows what would be sent and sends nothing**, including for
+  `project create --template`.
+- **`-q`/`--quiet`** drops the confirmations and hints, keeping the data.
+- **`-v`/`--verbose`** adds Odoo's Python traceback on failure.
+- **`hodoo help <command>`** and `--help` on anything explain that command, with
+  examples; `--help` also lists the credential order and the exit codes.
 
 Configuration resolves in this order, first hit wins:
 
-1. the flag (`--url`, `--api-key`, `--db`)
-2. the process environment (`ODOO_URL`, `ODOO_API_KEY`, `ODOO_DB`)
-3. a `.env` file at or above the working directory (up to four levels), read for
-   the same names
+1. the flag (`--url`, `--api-key`, `--db`, `-o`)
+2. the process environment (`ODOO_URL`, `ODOO_API_KEY`, `ODOO_DB`, `HODOO_OUTPUT`)
+3. a `.env` file at or above the working directory (up to four levels), read for the
+   same names
 
-A `.env` is read into a map and consulted explicitly; the process environment is
-never mutated (`std::env::set_var` needs `unsafe` in edition 2024, and this crate
-forbids unsafe code). `Config::from_env()` covers steps 1-2 for library callers;
-`hodoo::dotenv` covers step 3.
+A `.env` is read into a map and consulted explicitly; the process environment is never
+mutated (`std::env::set_var` needs `unsafe` in edition 2024, and this crate forbids
+unsafe code). `Config::from_env()` covers steps 1-2 for library callers; `hodoo::dotenv`
+covers step 3.
 
-Every command prints JSON on stdout; failures print a JSON object on stderr and
-exit `1` (Odoo or transport) or `2` (usage or configuration). `--pretty` indents,
-`--verbose` adds Odoo's Python traceback, `--limit 0` means no limit.
+In `-o json`, keys are **Odoo's own field names** (`date_deadline`, `user_ids`,
+`privacy_visibility`, `type_ids`), so the output lines up with the model documentation
+and with `/doc`. The Rust field names are friendlier; the rename lives on the struct
+with `#[serde(rename = ...)]`.
 
-The JSON keys are **Odoo's own field names** (`date_deadline`, `user_ids`,
-`privacy_visibility`, `type_ids`) both ways, so output lines up with the model
-documentation and with `/doc`. The Rust field names are friendlier; the rename
-lives on the struct with `#[serde(rename = ...)]`.
+### Dates a person writes
+
+`--due`, `--due-before`, `--start` and `--end` accept `today`, `tomorrow`, `yesterday`,
+`+3d`, `+2w`, `2026-12-01`, or `"2026-12-01 09:00"`. Deadlines come back as `in 3d`,
+`2d ago`, `today`, or a date once they are more than a month away; overdue is red.
 
 ## Library
 
@@ -147,11 +208,11 @@ against Odoo 19.0 rather than assumed.
 
 | Want | Call |
 |---|---|
-| Project from a template (repeatable setups) | `call project.project action_create_from_template --ids <tpl> --json '{"values":{...}}'` — see below |
-| Create a client contact | `call res.partner create --json '{"vals_list":[{"name":"Acme","is_company":true}]}'` — needs Contacts > Creation (`base.group_partner_manager`), which a project administrator does not have |
+| Project from a template (repeatable setups) | `call project.project action_create_from_template --ids <tpl> --body '{"values":{...}}'` — see below |
+| Create a client contact | `call res.partner create --body '{"vals_list":[{"name":"Acme","is_company":true}]}'` — needs Contacts > Creation (`base.group_partner_manager`), which a project administrator does not have |
 | Project stages (`To Do`, `In Progress`, ...) | `call project.project.stage search_read` then `project update --stage <id>` |
 | Collaborators, project roles | `call project.collaborator ...` / `call project.role ...` |
-| Rollups and group-bys | `call project.task search_count --json '{"domain":[...]}'` |
+| Rollups and group-bys | `call project.task search_count --body '{"domain":[...]}'` |
 | Find your own user id | `hodoo whoami` (wraps `res.users/context_get`) |
 
 ### Project templates
@@ -161,9 +222,9 @@ mechanism; the `action_toggle_*` methods only return UI dialogs), then instantia
 result is the new project, so JSON-2 answers with a list of ids.
 
 ```sh
-hodoo call project.project write --json '{"ids":[<template>],"vals":{"is_template":true}}'
+hodoo call project.project write --body '{"ids":[<template>],"vals":{"is_template":true}}'
 hodoo call project.project action_create_from_template --ids <template> \
-  --json '{"values":{"name":"Acme site","partner_id":12}}'
+  --body '{"values":{"name":"Acme site","partner_id":12}}'
 ```
 
 Verified against 19.0, because none of this is obvious:
@@ -197,6 +258,12 @@ cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 ```
 
+The CLI has its own tests: `crates/hodoo-cli/tests/ux.rs` runs the real binary against a
+stub Odoo and asserts what a user sees — the table default, `-o json`, `--no-headers`,
+human deadlines, a dry run sending nothing, a delete refusing without `-f`, the
+stdout/stderr split, exit codes, and clap's suggestions for a typo. Unit tests inside the
+binary cover the renderer and the argument surface.
+
 Two suites are `#[ignore]`d because they need a real server. They take their
 credentials from the same place as the CLI, so a `.env` is enough:
 
@@ -223,9 +290,11 @@ HODOO_LIVE=1 ODOO_URL=... ODOO_API_KEY=... cargo test -- --ignored --nocapture
 `scenarios/startup-founder.sh` builds a whole founder's Odoo through the CLI: two client
 websites, the product itself and personal life, with 18 task stages, tags, milestones,
 subtasks, a dependency chain per project, chatter, and a task in every state. `up` asserts
-46 properties while it works (so it doubles as an end-to-end test), `down` removes exactly
-what it created by its `(scenario)` name marker, and `show` prints a read-only dashboard:
-projects with overdue counts, the blocked-by graph, milestones and the personal list.
+46 properties while it works (so it doubles as an end-to-end test) and `down` removes
+exactly what it created, found by its `(scenario)` name marker. `show` is the dashboard: it
+unsets the script's JSON mode and simply runs `hodoo whoami`, `project ls`, `board`,
+`task ls --overdue`, `milestone ls` and `task show`, so it is also a tour of the human
+output.
 
 ```sh
 cargo build                       # the scenario drives the built binary

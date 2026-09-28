@@ -43,6 +43,27 @@ Cargo commands run from `hodoo/`.
 | `cargo fmt --check` | Formatting (run `cargo fmt` to fix) |
 | `HODOO_LIVE=1 cargo test -- --ignored --nocapture` | The two ignored suites: `tests/live.rs` (creates and deletes real records) and `tests/drift.rs` (field names vs Odoo's `/doc-bearer/<model>.json`; needs a Settings-level key, otherwise it prints a skip) |
 
+### CLI conventions (the human-first rework)
+
+The CLI is for people: a table by default, colour only on a terminal, deadlines as
+`in 3d`, and an id **or a name** wherever a record is referenced (`--project acme`,
+`--stage Review`, `--tag urgent`; `--tag` creates a missing tag). Scripts opt into JSON
+with `-o json` / `--json` / `HODOO_OUTPUT=json` — worth setting once at the top of a
+script. `docs/superpowers/specs/2026-09-28-hodoo-cli-ux-design.md` records why, with the
+clig.dev rules behind each choice; `hodoo/README.md` is the user-facing version.
+
+Things that will bite an agent writing commands into a script:
+
+- **`rm` refuses without `-f` when stdin is not a terminal** (and without a `y` on one).
+  `--no-input` makes it fail with the reason instead of hanging.
+- **`-n`/`--dry-run` sends nothing** — mutations print what they *would* send. Use it to
+  check a command's shape without touching data.
+- **A change reports itself on stdout in JSON mode**: `{"id":31}` for a create,
+  `{"id":31,"ok":true}` for an update, `{"deleted":31,"ok":true}` for a delete. In table
+  mode the confirmation goes to stderr instead, so stdout stays parseable either way.
+- **`call` takes its body as `--body`**, not `--json` (`--json` is the output flag now).
+- Names that match several records are an error listing them, never a guess.
+
 Credentials resolve flag, then process environment (`ODOO_URL`, `ODOO_API_KEY`,
 `ODOO_DB`), then a `.env` at or above the working directory. This repo's `.env` holds
 `ODOO_API_KEY` (and `ODOO_URL`), is gitignored, and is read into a map rather than

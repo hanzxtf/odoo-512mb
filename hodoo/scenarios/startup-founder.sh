@@ -35,11 +35,16 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 HODOO="${HODOO_BIN:-$ROOT/hodoo/target/debug/hodoo}"
 MARKER="(scenario)"
 
+# This is a script, so it asks for JSON once and reads it with python. A person
+# running `hodoo` by hand gets tables; `show` below unsets this on purpose.
+
 if [ ! -x "$HODOO" ]; then
   echo "no hodoo binary at $HODOO: run 'cargo build' in $ROOT/hodoo first" >&2
   exit 2
 fi
 cd "$ROOT"
+# Everything below reads the CLI with python, so the script asks for JSON once.
+export HODOO_OUTPUT=json
 
 # --- helpers ---------------------------------------------------------------
 
@@ -78,7 +83,7 @@ count() { python3 -c 'import json,sys; print(len(json.load(sys.stdin)))'; }
 # Odoo's own project stages, reused rather than recreated.
 project_stage() { # project_stage <name>
   "$HODOO" call project.project.stage search_read \
-    --json "{\"domain\":[[\"name\",\"=\",\"$1\"]],\"fields\":[\"id\"],\"limit\":1}" | field '[0].id'
+    --body "{\"domain\":[[\"name\",\"=\",\"$1\"]],\"fields\":[\"id\"],\"limit\":1}" | field '[0].id'
 }
 
 today() { date -d "$1" +%F; }
@@ -86,7 +91,9 @@ today() { date -d "$1" +%F; }
 # Tasks are assigned to the automation user, whose partner has no email address:
 # a scenario that posts comments must not be able to mail a real person.
 auth() {
-  if ! whoami_json="$("$HODOO" whoami 2>/tmp/hodoo-scenario-auth.json)"; then
+  # `-o json` explicitly: this helper runs in both modes (the dashboard unsets
+  # HODOO_OUTPUT), and it is the one place the script needs a parseable answer.
+  if ! whoami_json="$("$HODOO" whoami -o json 2>/tmp/hodoo-scenario-auth.json)"; then
     die "hodoo could not authenticate: $(head -c 300 /tmp/hodoo-scenario-auth.json)"
   fi
   AGENT="$(printf '%s' "$whoami_json" | field .uid)"
@@ -101,13 +108,13 @@ down() {
 
   local projects tags contacts stage_ids own_stages
   projects="$("$HODOO" call project.project search \
-    --json "{\"domain\":[[\"name\",\"like\",\"$MARKER\"]]}" | csv)"
+    --body "{\"domain\":[[\"name\",\"like\",\"$MARKER\"]]}" | csv)"
   tags="$("$HODOO" call project.tags search \
-    --json "{\"domain\":[[\"name\",\"like\",\"$MARKER\"]]}" | csv)"
+    --body "{\"domain\":[[\"name\",\"like\",\"$MARKER\"]]}" | csv)"
   contacts="$("$HODOO" call res.partner search \
-    --json "{\"domain\":[[\"name\",\"like\",\"$MARKER\"]]}" | csv)"
+    --body "{\"domain\":[[\"name\",\"like\",\"$MARKER\"]]}" | csv)"
   own_stages="$("$HODOO" call project.project.stage search \
-    --json "{\"domain\":[[\"name\",\"like\",\"$MARKER\"]]}" | csv)"
+    --body "{\"domain\":[[\"name\",\"like\",\"$MARKER\"]]}" | csv)"
   stage_ids=""
 
   # Task stages are shared, so they are not deleted with the project: collect
@@ -121,33 +128,33 @@ down() {
 
   if [ -n "$projects" ]; then
     note "projects:       $projects"
-    "$HODOO" call project.project unlink --json "{\"ids\":[$projects]}" > /dev/null
+    "$HODOO" call project.project unlink --body "{\"ids\":[$projects]}" > /dev/null
   fi
   if [ -n "$stage_ids" ]; then
     note "task stages:    $stage_ids"
-    "$HODOO" call project.task.type unlink --json "{\"ids\":[$stage_ids]}" > /dev/null
+    "$HODOO" call project.task.type unlink --body "{\"ids\":[$stage_ids]}" > /dev/null
   fi
   if [ -n "$tags" ]; then
     note "tags:           $tags"
-    "$HODOO" call project.tags unlink --json "{\"ids\":[$tags]}" > /dev/null
+    "$HODOO" call project.tags unlink --body "{\"ids\":[$tags]}" > /dev/null
   fi
   if [ -n "$contacts" ]; then
     note "contacts:       $contacts"
-    "$HODOO" call res.partner unlink --json "{\"ids\":[$contacts]}" > /dev/null
+    "$HODOO" call res.partner unlink --body "{\"ids\":[$contacts]}" > /dev/null
   fi
   if [ -n "$own_stages" ]; then
     note "project stages: $own_stages"
-    "$HODOO" call project.project.stage unlink --json "{\"ids\":[$own_stages]}" > /dev/null
+    "$HODOO" call project.project.stage unlink --body "{\"ids\":[$own_stages]}" > /dev/null
   fi
 
   expect 0 "$("$HODOO" call project.project search_count \
-    --json "{\"domain\":[[\"name\",\"like\",\"$MARKER\"]]}")" "scenario projects left behind"
+    --body "{\"domain\":[[\"name\",\"like\",\"$MARKER\"]]}")" "scenario projects left behind"
   expect 0 "$("$HODOO" call project.task search_count \
-    --json "{\"domain\":[[\"name\",\"like\",\"$MARKER\"]]}")" "scenario tasks left behind"
+    --body "{\"domain\":[[\"name\",\"like\",\"$MARKER\"]]}")" "scenario tasks left behind"
   expect 0 "$("$HODOO" call project.task.type search_count \
-    --json "{\"domain\":[[\"name\",\"like\",\"$MARKER\"]]}")" "scenario task stages left behind"
+    --body "{\"domain\":[[\"name\",\"like\",\"$MARKER\"]]}")" "scenario task stages left behind"
   expect 0 "$("$HODOO" call res.partner search_count \
-    --json "{\"domain\":[[\"name\",\"like\",\"$MARKER\"]]}")" "scenario contacts left behind"
+    --body "{\"domain\":[[\"name\",\"like\",\"$MARKER\"]]}")" "scenario contacts left behind"
 }
 
 # --- the dataset -----------------------------------------------------------
@@ -159,7 +166,7 @@ up() {
   # Rebuilding rather than duplicating: the names are stable, so a second `up`
   # would otherwise collide with the first.
   if [ "$("$HODOO" call project.project search_count \
-        --json "{\"domain\":[[\"name\",\"like\",\"$MARKER\"]]}")" != "0" ]; then
+        --body "{\"domain\":[[\"name\",\"like\",\"$MARKER\"]]}")" != "0" ]; then
     note "an earlier run is present: removing it first"
     down
   fi
@@ -170,7 +177,7 @@ up() {
   # client projects are still built, just without a customer link.
   step "clients"
   local acme="" nordwind="" have_contacts=1
-  if ! acme_reply="$("$HODOO" call res.partner create --json "{\"vals_list\":[{
+  if ! acme_reply="$("$HODOO" call res.partner create --body "{\"vals_list\":[{
       \"name\":\"Acme Manufacturing $MARKER\",
       \"is_company\":true,
       \"email\":\"ops@acme.example\",
@@ -181,13 +188,13 @@ up() {
     note "granting Contacts > Creation (base.group_partner_manager) gives the full dataset"
   else
     acme="$(printf '%s' "$acme_reply" | field '[0]')"
-    nordwind="$("$HODOO" call res.partner create --json "{\"vals_list\":[{
+    nordwind="$("$HODOO" call res.partner create --body "{\"vals_list\":[{
       \"name\":\"Nordwind Studio $MARKER\",
       \"is_company\":true,
       \"email\":\"hello@nordwind.example\"
     }]}" | field '[0]')"
     expect "Acme Manufacturing $MARKER" \
-      "$("$HODOO" call res.partner read --ids "$acme" --json '{"fields":["name"]}' | field '[0].name')" \
+      "$("$HODOO" call res.partner read --ids "$acme" --body '{"fields":["name"]}' | field '[0].name')" \
       "the client contact reads back"
     note "Acme $acme, Nordwind $nordwind"
   fi
@@ -199,16 +206,9 @@ up() {
   fi
 
   # -- tags -----------------------------------------------------------------
+  # Tags are created on the spot by `--tag <name>`, so nothing to do here but
+  # check at the end that they exist.
   step "tags"
-  local t_client t_website t_billing t_growth t_health t_home
-  t_client="$("$HODOO" tag ensure "client $MARKER" | field .id)"
-  t_website="$("$HODOO" tag ensure "website $MARKER" | field .id)"
-  t_billing="$("$HODOO" tag ensure "billing $MARKER" | field .id)"
-  t_growth="$("$HODOO" tag ensure "growth $MARKER" | field .id)"
-  t_health="$("$HODOO" tag ensure "health $MARKER" | field .id)"
-  t_home="$("$HODOO" tag ensure "home $MARKER" | field .id)"
-  expect 6 "$("$HODOO" call project.tags search_count \
-    --json "{\"domain\":[[\"name\",\"like\",\"$MARKER\"]]}")" "scenario tags"
 
   # -- projects -------------------------------------------------------------
   step "projects"
@@ -218,43 +218,43 @@ up() {
     "${customer_of_acme[@]}" --manager "$AGENT" \
     --stage "$(project_stage 'In Progress')" \
     --visibility employees \
-    --date-start "$(today '-5 days')" --date "$(today '+60 days')" \
-    --allow-milestones --allow-task-dependencies \
-    --tag "$t_client" --tag "$t_website" \
+    --start "$(today '-5 days')" --end "$(today '+60 days')" \
+    --milestones --dependencies \
+    --tag "client $MARKER" --tag "website $MARKER" \
     --description '<p>Marketing site for Acme: 8 pages, CMS, multi-language.</p>' | field .id)"
   p_nordwind="$("$HODOO" project create \
     --name "Nordwind Studio - Site $MARKER" \
     "${customer_of_nordwind[@]}" --manager "$AGENT" \
     --stage "$(project_stage 'To Do')" \
     --visibility followers \
-    --date-start "$(today '+3 days')" --date "$(today '+75 days')" \
-    --allow-task-dependencies \
-    --tag "$t_client" --tag "$t_website" \
+    --start "$(today '+3 days')" --end "$(today '+75 days')" \
+    --dependencies \
+    --tag "client $MARKER" --tag "website $MARKER" \
     --description '<p>Portfolio site for Nordwind: 5 sections, photography-led.</p>' | field .id)"
   p_product="$("$HODOO" project create \
     --name "Product - SaaS MVP $MARKER" \
     --manager "$AGENT" \
     --stage "$(project_stage 'In Progress')" \
     --visibility employees \
-    --date-start "$(today '-20 days')" --date "$(today '+120 days')" \
-    --allow-task-dependencies \
-    --tag "$t_growth" \
+    --start "$(today '-20 days')" --end "$(today '+120 days')" \
+    --dependencies \
+    --tag "growth $MARKER" \
     --description '<p>Our own product: auth, billing, onboarding.</p>' | field .id)"
   p_personal="$("$HODOO" project create \
     --name "Personal Life $MARKER" \
     --visibility followers \
-    --date-start "$(today '+1 day')" \
-    --tag "$t_home" \
+    --start "$(today '+1 day')" \
+    --tag "home $MARKER" \
     --description '<p>Anything that is not work.</p>' | field .id)"
   expect 4 "$("$HODOO" call project.project search_count \
-    --json "{\"domain\":[[\"name\",\"like\",\"$MARKER\"]]}")" "scenario projects"
-  expect 2 "$("$HODOO" project ls --tag "$t_client" --limit 0 | count)" "projects carrying the client tag"
+    --body "{\"domain\":[[\"name\",\"like\",\"$MARKER\"]]}")" "scenario projects"
+  expect 2 "$("$HODOO" project ls --tag "client $MARKER" --limit 0 | count)" "projects carrying the client tag"
 
   # The fields a founder actually cares about, and that Odoo defaults.
-  expect "employees" "$("$HODOO" project get "$p_acme" | field .privacy_visibility)" "acme visibility"
-  expect "followers" "$("$HODOO" project get "$p_nordwind" | field .privacy_visibility)" "nordwind visibility"
+  expect "employees" "$("$HODOO" project show "$p_acme" | field .privacy_visibility)" "acme visibility"
+  expect "followers" "$("$HODOO" project show "$p_nordwind" | field .privacy_visibility)" "nordwind visibility"
   if [ "$have_contacts" = 1 ]; then
-    expect "$acme" "$("$HODOO" project get "$p_acme" | field .partner_id)" "acme's customer link"
+    expect "$acme" "$("$HODOO" project show "$p_acme" | field .partner_id)" "acme's customer link"
     expect 1 "$("$HODOO" project ls --customer "$acme" --limit 0 | count)" \
       "the customer filter finds exactly Acme's project"
   else
@@ -265,7 +265,7 @@ up() {
   # A project starts with no task stages, so a staged task is impossible until
   # they exist: this is the Odoo behaviour hodoo documents.
   step "task stages"
-  expect "[]" "$("$HODOO" project get "$p_acme" | field .type_ids)" \
+  expect "[]" "$("$HODOO" project show "$p_acme" | field .type_ids)" \
     "a fresh project starts with no task stages"
 
   local a_backlog a_design a_build a_review a_live
@@ -295,31 +295,31 @@ up() {
   h_done="$("$HODOO" stage create --name "Done $MARKER" --project "$p_personal" --sequence 40 --fold | field .id)"
 
   expect 18 "$("$HODOO" call project.task.type search_count \
-    --json "{\"domain\":[[\"name\",\"like\",\"$MARKER\"]]}")" "scenario task stages"
+    --body "{\"domain\":[[\"name\",\"like\",\"$MARKER\"]]}")" "scenario task stages"
   expect 5 "$("$HODOO" project stages "$p_acme" | count)" "stages attached to Acme"
   expect "true" "$("$HODOO" stage ls --project "$p_acme" --limit 0 \
     | python3 -c 'import json,sys; print(str(any(s["fold"] for s in json.load(sys.stdin))).lower())')" \
     "one Acme stage is folded"
 
   # attach/detach: one stage shared with a second project, then given back.
-  "$HODOO" project attach-stage "$p_nordwind" --stage "$a_design" > /dev/null
+  "$HODOO" project attach "$p_nordwind" --stage "$a_design" > /dev/null
   expect 5 "$("$HODOO" project stages "$p_nordwind" | count)" "Nordwind borrowed the Design stage"
-  "$HODOO" project detach-stage "$p_nordwind" --stage "$a_design" > /dev/null
+  "$HODOO" project detach "$p_nordwind" --stage "$a_design" > /dev/null
   expect 4 "$("$HODOO" project stages "$p_nordwind" | count)" "and gave it back"
 
   # -- milestones -----------------------------------------------------------
   step "milestones"
   local m_signoff m_launch m_freeze m_beta
   m_signoff="$("$HODOO" milestone create --project "$p_acme" --name "Design sign-off $MARKER" \
-    --deadline "$(today '+7 days')" | field .id)"
+    --due "$(today '+7 days')" | field .id)"
   m_launch="$("$HODOO" milestone create --project "$p_acme" --name "Launch $MARKER" \
-    --deadline "$(today '+55 days')" | field .id)"
+    --due "$(today '+55 days')" | field .id)"
   m_freeze="$("$HODOO" milestone create --project "$p_nordwind" --name "Content freeze $MARKER" \
-    --deadline "$(today '+25 days')" | field .id)"
+    --due "$(today '+25 days')" | field .id)"
   m_beta="$("$HODOO" milestone create --project "$p_product" --name "Private beta $MARKER" \
-    --deadline "$(today '+40 days')" | field .id)"
+    --due "$(today '+40 days')" | field .id)"
   expect 4 "$("$HODOO" call project.milestone search_count \
-    --json "{\"domain\":[[\"name\",\"like\",\"$MARKER\"]]}")" "scenario milestones"
+    --body "{\"domain\":[[\"name\",\"like\",\"$MARKER\"]]}")" "scenario milestones"
 
   # -- Acme: the full build chain ------------------------------------------
   step "Acme: discovery to launch, on a dependency chain"
@@ -327,38 +327,39 @@ up() {
   local kickoff wireframes homepage product_page audit mobile review_call popup
   kickoff="$("$HODOO" task create --name "Kickoff and discovery notes $MARKER" \
     --project "$p_acme" --stage "$a_backlog" --priority low --assignee "$AGENT" \
-    --allocated-hours 4 --tag "$t_client" \
+    --hours 4 --tag "client $MARKER" \
     --description '<p>Call notes, goals, constraints.</p>' | field .id)"
   wireframes="$("$HODOO" task create --name "Wireframes for all 8 pages $MARKER" \
     --project "$p_acme" --stage "$a_design" --priority high --assignee "$AGENT" \
-    --deadline "$(today '+5 days')" --allocated-hours 12 \
-    --tag "$t_client" --tag "$t_website" --milestone "$m_signoff" | field .id)"
+    --due "$(today '+5 days')" --hours 12 \
+    --tag "client $MARKER" --tag "website $MARKER" --milestone "$m_signoff" | field .id)"
   homepage="$("$HODOO" task create --name "Homepage build $MARKER" \
     --project "$p_acme" --stage "$a_build" --priority medium --assignee "$AGENT" \
-    --deadline "$(today '+12 days')" --allocated-hours 16 --tag "$t_website" \
+    --due "$(today '+12 days')" --hours 16 --tag "website $MARKER" \
     --depends-on "$wireframes" | field .id)"
   product_page="$("$HODOO" task create --name "Product page build $MARKER" \
     --project "$p_acme" --stage "$a_build" --priority medium --assignee "$AGENT" \
-    --deadline "$(today '+18 days')" --allocated-hours 14 --tag "$t_website" \
+    --due "$(today '+18 days')" --hours 14 --tag "website $MARKER" \
     --depends-on "$wireframes" | field .id)"
   audit="$("$HODOO" task create --name "Accessibility audit $MARKER" \
     --project "$p_acme" --stage "$a_review" --priority high --assignee "$AGENT" \
-    --deadline "$(today '+30 days')" --allocated-hours 8 \
+    --due "$(today '+30 days')" --hours 8 \
     --depends-on "$homepage" --depends-on "$product_page" | field .id)"
   mobile="$("$HODOO" task create --name "Mobile breakpoints $MARKER" \
     --project "$p_acme" --stage "$a_design" --priority medium --assignee "$AGENT" \
-    --allocated-hours 6 --parent "$wireframes" | field .id)"
+    --hours 6 --parent "$wireframes" | field .id)"
   review_call="$("$HODOO" task create --name "Client review call $MARKER" \
     --project "$p_acme" --stage "$a_review" --priority high --assignee "$AGENT" \
-    --deadline "$(today '+3 days')" --state waiting --tag "$t_client" | field .id)"
+    --due "$(today '+3 days')" --state waiting --tag "client $MARKER" | field .id)"
   popup="$("$HODOO" task create --name "Newsletter popup, rejected $MARKER" \
-    --project "$p_acme" --stage "$a_backlog" --priority low --tag "$t_website" | field .id)"
+    --project "$p_acme" --stage "$a_backlog" --priority low --tag "website $MARKER" | field .id)"
 
   # The dependency chain is the point of allow_task_dependencies.
-  expect "$wireframes" "$("$HODOO" task deps "$homepage" | field '[0]')" "the homepage waits on the wireframes"
+  expect "$wireframes" "$("$HODOO" task deps "$homepage" | field '.blocked_by[0]')" \
+    "the homepage waits on the wireframes"
   local audit_deps
   audit_deps="$("$HODOO" task deps "$audit" \
-    | python3 -c 'import json,sys; print(" ".join(str(i) for i in json.load(sys.stdin)))')"
+    | python3 -c 'import json,sys; print(" ".join(str(i) for i in json.load(sys.stdin)["blocked_by"]))')"
   expect 2 "$(echo "$audit_deps" | wc -w | tr -d ' ')" "the audit waits on two tasks"
   local dep
   for dep in $audit_deps; do
@@ -370,26 +371,26 @@ up() {
   # Waiting is derived from open dependencies, but Odoo does not compute it while
   # the task is being created: writing the dependencies again is what makes a
   # blocked task read as blocked. This surprised us once; the scenario pins it.
-  expect "01_in_progress" "$("$HODOO" task get "$homepage" | field .state)" \
+  expect "01_in_progress" "$("$HODOO" task show "$homepage" | field .state)" \
     "a freshly created task with an open blocker is not waiting yet"
   "$HODOO" task update "$homepage" --depends-on "$wireframes" > /dev/null
-  expect "04_waiting_normal" "$("$HODOO" task get "$homepage" | field .state)" \
+  expect "04_waiting_normal" "$("$HODOO" task show "$homepage" | field .state)" \
     "writing the dependencies turns it into waiting"
-  expect "04_waiting_normal" "$("$HODOO" task get "$review_call" | field .state)" \
+  expect "04_waiting_normal" "$("$HODOO" task show "$review_call" | field .state)" \
     "an explicit waiting state sticks"
-  expect "$wireframes" "$("$HODOO" task get "$mobile" | field .parent_id)" "the mobile work is a subtask of the wireframes"
+  expect "$wireframes" "$("$HODOO" task show "$mobile" | field .parent_id)" "the mobile work is a subtask of the wireframes"
 
   # State transitions.
   "$HODOO" task done "$kickoff" > /dev/null
   "$HODOO" task cancel "$popup" > /dev/null
-  expect "1_done" "$("$HODOO" task get "$kickoff" | field .state)" "the kickoff task is done"
-  expect "1_canceled" "$("$HODOO" task get "$popup" | field .state)" "the rejected popup is canceled"
-  expect "true" "$("$HODOO" task get "$kickoff" | field .is_closed)" "is_closed follows the state"
+  expect "1_done" "$("$HODOO" task show "$kickoff" | field .state)" "the kickoff task is done"
+  expect "1_canceled" "$("$HODOO" task show "$popup" | field .state)" "the rejected popup is canceled"
+  expect "true" "$("$HODOO" task show "$kickoff" | field .is_closed)" "is_closed follows the state"
 
   # Moving a task between stages, and escalating it.
   "$HODOO" task update "$product_page" --stage "$a_review" --priority high > /dev/null
-  expect "$a_review" "$("$HODOO" task get "$product_page" | field .stage_id)" "the product page moved to Review"
-  expect "2" "$("$HODOO" task get "$product_page" | field .priority)" "and was escalated to high"
+  expect "$a_review" "$("$HODOO" task show "$product_page" | field .stage_id)" "the product page moved to Review"
+  expect "2" "$("$HODOO" task show "$product_page" | field .priority)" "and was escalated to high"
 
   # Chatter, both kinds.
   "$HODOO" task comment "$homepage" --body "Waiting on Acme's brand assets before the header can be finished." --internal > /dev/null
@@ -405,21 +406,21 @@ up() {
   local inventory copywriting shoot blocked photos
   inventory="$("$HODOO" task create --name "Content inventory $MARKER" \
     --project "$p_nordwind" --stage "$n_inbox" --priority medium --assignee "$AGENT" \
-    --allocated-hours 5 --tag "$t_client" | field .id)"
+    --hours 5 --tag "client $MARKER" | field .id)"
   copywriting="$("$HODOO" task create --name "Copywriting for 5 sections $MARKER" \
     --project "$p_nordwind" --stage "$n_doing" --priority high --assignee "$AGENT" \
-    --deadline "$(today '+14 days')" --allocated-hours 10 --milestone "$m_freeze" | field .id)"
+    --due "$(today '+14 days')" --hours 10 --milestone "$m_freeze" | field .id)"
   shoot="$("$HODOO" task create --name "Photo shoot brief $MARKER" \
     --project "$p_nordwind" --stage "$n_doing" --priority medium --assignee "$AGENT" \
-    --deadline "$(today '+9 days')" --allocated-hours 4 --depends-on "$inventory" | field .id)"
+    --due "$(today '+9 days')" --hours 4 --depends-on "$inventory" | field .id)"
   blocked="$("$HODOO" task create --name "Hosting decision $MARKER" \
     --project "$p_nordwind" --stage "$n_blocked" --priority urgent --assignee "$AGENT" \
-    --deadline "$(today '-2 days')" --state changes-requested | field .id)"
+    --due "$(today '-2 days')" --state changes-requested | field .id)"
   photos="$("$HODOO" task create --name "Pick 12 hero photos $MARKER" \
     --project "$p_nordwind" --stage "$n_doing" --priority low --assignee "$AGENT" \
-    --allocated-hours 3 --parent "$shoot" --tag "$t_website" | field .id)"
+    --hours 3 --parent "$shoot" --tag "website $MARKER" | field .id)"
 
-  expect "02_changes_requested" "$("$HODOO" task get "$blocked" | field .state)" \
+  expect "02_changes_requested" "$("$HODOO" task show "$blocked" | field .state)" \
     "the hosting decision is changes-requested"
   expect 5 "$("$HODOO" task ls --project "$p_nordwind" --open --limit 0 | count)" "five Nordwind tasks are open"
   expect 1 "$("$HODOO" task ls --project "$p_nordwind" --parent "$shoot" --limit 0 | count)" \
@@ -431,29 +432,29 @@ up() {
   local datamodel auth_task billing onboarding pipeline
   datamodel="$("$HODOO" task create --name "Define the data model $MARKER" \
     --project "$p_product" --stage "$d_released" --priority high --assignee "$AGENT" \
-    --allocated-hours 6 --tag "$t_growth" \
+    --hours 6 --tag "growth $MARKER" \
     --description '<p>Tenants, users, projects, tasks.</p>' | field .id)"
   auth_task="$("$HODOO" task create --name "Auth: signup and login $MARKER" \
     --project "$p_product" --stage "$d_building" --priority urgent --assignee "$AGENT" \
-    --deadline "$(today '+10 days')" --allocated-hours 24 --milestone "$m_beta" \
+    --due "$(today '+10 days')" --hours 24 --milestone "$m_beta" \
     --depends-on "$datamodel" | field .id)"
   billing="$("$HODOO" task create --name "Stripe billing $MARKER" \
     --project "$p_product" --stage "$d_qa" --priority high --assignee "$AGENT" \
-    --deadline "$(today '+35 days')" --allocated-hours 20 --tag "$t_billing" \
+    --due "$(today '+35 days')" --hours 20 --tag "billing $MARKER" \
     --depends-on "$auth_task" | field .id)"
   onboarding="$("$HODOO" task create --name "Onboarding checklist UI $MARKER" \
     --project "$p_product" --stage "$d_ready" --priority medium --assignee "$AGENT" \
-    --allocated-hours 12 --depends-on "$auth_task" | field .id)"
+    --hours 12 --depends-on "$auth_task" | field .id)"
   pipeline="$("$HODOO" task create --name "Deploy pipeline $MARKER" \
     --project "$p_product" --stage "$d_building" --priority high --assignee "$AGENT" \
-    --allocated-hours 10 | field .id)"
+    --hours 10 | field .id)"
 
   "$HODOO" task done "$datamodel" > /dev/null
   "$HODOO" milestone reached "$m_beta" > /dev/null
   "$HODOO" milestone reached "$m_signoff" > /dev/null
   "$HODOO" task comment "$billing" --body "Beta invite list is at 43 signups." --internal > /dev/null
 
-  expect "true" "$("$HODOO" task get "$datamodel" | field .is_closed)" "the data model is closed"
+  expect "true" "$("$HODOO" task show "$datamodel" | field .is_closed)" "the data model is closed"
   expect "true" "$("$HODOO" milestone ls --project "$p_product" | field '[0].is_reached')" \
     "the private beta milestone is reached"
   expect "false" "$("$HODOO" milestone ls --project "$p_acme" | python3 -c '
@@ -468,18 +469,18 @@ print(str(next(m["is_reached"] for m in rows if m["name"].startswith("Launch")))
   local dentist passport trip hotels tap
   dentist="$("$HODOO" task create --name "Book the dentist $MARKER" \
     --project "$p_personal" --stage "$h_week" --priority high \
-    --deadline "$(today '+2 days')" --tag "$t_health" | field .id)"
+    --due "$(today '+2 days')" --tag "health $MARKER" | field .id)"
   passport="$("$HODOO" task create --name "Renew the passport $MARKER" \
     --project "$p_personal" --stage "$h_someday" --priority medium \
-    --state waiting --tag "$t_home" | field .id)"
+    --state waiting --tag "home $MARKER" | field .id)"
   trip="$("$HODOO" task create --name "Plan the weekend trip $MARKER" \
     --project "$p_personal" --stage "$h_doing" --priority medium \
-    --deadline "$(today '+20 days')" | field .id)"
+    --due "$(today '+20 days')" | field .id)"
   hotels="$("$HODOO" task create --name "Compare three hotels $MARKER" \
     --project "$p_personal" --stage "$h_doing" --priority low --parent "$trip" | field .id)"
   tap="$("$HODOO" task create --name "Fix the dripping tap $MARKER" \
-    --project "$p_personal" --stage "$h_week" --priority low --tag "$t_home" \
-    --deadline "$(today '-1 day')" | field .id)"
+    --project "$p_personal" --stage "$h_week" --priority low --tag "home $MARKER" \
+    --due "$(today '-1 day')" | field .id)"
 
   # Odoo assigns the calling user to whatever it creates, so "personal" tasks
   # arrive assigned to the automation user. Nobody else may be on them, and
@@ -491,31 +492,36 @@ owners = sorted({u for t in json.load(sys.stdin) for u in t["user_ids"]})
 print(",".join(str(u) for u in owners))
 ')" "personal tasks are assigned only to the automation user"
   "$HODOO" task update "$tap" --unassign > /dev/null
-  expect "[]" "$("$HODOO" task get "$tap" | field .user_ids)" "and can be unassigned again"
+  expect "[]" "$("$HODOO" task show "$tap" | field .user_ids)" "and can be unassigned again"
   "$HODOO" task update "$tap" --assignee "$AGENT" > /dev/null
-  expect "$p_personal" "$("$HODOO" call project.task read --ids "$hotels" --json '{"fields":["project_id"]}' \
+  expect "$p_personal" "$("$HODOO" call project.task read --ids "$hotels" --body '{"fields":["project_id"]}' \
     | field '[0].project_id[0]')" "the personal subtask stayed in its project"
 
   # -- cross-project views --------------------------------------------------
   step "what a founder actually asks"
 
+  # Six tags in total: four on projects, two only ever used by tasks, and all of
+  # them created on demand by `--tag`.
+  expect 6 "$("$HODOO" call project.tags search_count \
+    --body "{\"domain\":[[\"name\",\"like\",\"$MARKER\"]]}")" "scenario tags"
+
   local total open
-  total="$("$HODOO" call project.task search_count --json "{\"domain\":[[\"name\",\"like\",\"$MARKER\"]]}")"
-  open="$("$HODOO" task ls --name "$MARKER" --open --limit 0 | count)"
+  total="$("$HODOO" call project.task search_count --body "{\"domain\":[[\"name\",\"like\",\"$MARKER\"]]}")"
+  open="$("$HODOO" task ls "$MARKER" --open --limit 0 | count)"
   expect 23 "$total" "tasks in the dataset"
   expect 20 "$open" "of which are open"
   note "closed: $((total - open)) (done, canceled)"
 
   local overdue
-  overdue="$("$HODOO" task ls --name "$MARKER" --open --deadline-before "$(today 'today')" --limit 0 | count)"
+  overdue="$("$HODOO" task ls "$MARKER" --open --due-before "$(today 'today')" --limit 0 | count)"
   expect 2 "$overdue" "overdue tasks"
-  note "overdue: $("$HODOO" task ls --name "$MARKER" --open --deadline-before "$(today 'today')" \
+  note "overdue: $("$HODOO" task ls "$MARKER" --open --due-before "$(today 'today')" \
     --limit 0 --order date_deadline | python3 -c '
 import json, sys
 print(", ".join(t["name"] for t in json.load(sys.stdin)))
 ')"
 
-  expect 5 "$("$HODOO" task ls --name "$MARKER" --open --deadline-before "$(today '+7 days')" --limit 0 | count)" \
+  expect 5 "$("$HODOO" task ls "$MARKER" --open --due-before "$(today '+7 days')" --limit 0 | count)" \
     "open tasks due within a week"
 
   # Per-stage load on the biggest project, which is what a board view shows.
@@ -524,7 +530,7 @@ print(", ".join(t["name"] for t in json.load(sys.stdin)))
 import json, subprocess, sys
 for stage in json.load(sys.stdin):
     counted = subprocess.run(
-        ["'"$HODOO"'", "call", "project.task", "search_count", "--json",
+        ["'"$HODOO"'", "call", "project.task", "search_count", "--body",
          json.dumps({"domain": [["stage_id", "=", stage["id"]], ["is_closed", "=", False]]})],
         capture_output=True, text=True, check=True).stdout
     print("    %-22s %s open" % (stage["name"], json.loads(counted)))
@@ -534,9 +540,9 @@ for stage in json.load(sys.stdin):
   note "open work per project:"
   local project
   for project in "$p_acme" "$p_nordwind" "$p_product" "$p_personal"; do
-    printf '    %-46s %s open\n' "$("$HODOO" project get "$project" | field .name)" \
+    printf '    %-46s %s open\n' "$("$HODOO" project show "$project" | field .name)" \
       "$("$HODOO" call project.task search_count \
-        --json "{\"domain\":[[\"project_id\",\"=\",$project],[\"is_closed\",\"=\",false]]}")"
+        --body "{\"domain\":[[\"project_id\",\"=\",$project],[\"is_closed\",\"=\",false]]}")"
   done
 
   # A stage from another project is *accepted*: that rule is a view domain, not
@@ -545,22 +551,23 @@ for stage in json.load(sys.stdin):
   local probe
   probe="$("$HODOO" task create --name "Wrong-stage probe $MARKER" \
     --project "$p_personal" --stage "$a_build" | field .id)"
-  expect "$a_build" "$("$HODOO" task get "$probe" | field .stage_id)" \
+  expect "$a_build" "$("$HODOO" task show "$probe" | field .stage_id)" \
     "a foreign stage is accepted (the project/stage rule is UI-only)"
   # ...and using it enrolls that stage into the project, which is how the kanban
   # stays consistent afterwards. Undo both, or the dataset gains a stray stage.
   expect "true" "$("$HODOO" project stages "$p_personal" \
     | python3 -c "import json,sys; print(str(any(s['id'] == $a_build for s in json.load(sys.stdin))).lower())")" \
     "and the stage is enrolled into the other project"
-  "$HODOO" task rm "$probe" > /dev/null
-  "$HODOO" project detach-stage "$p_personal" --stage "$a_build" > /dev/null
+  # A script has nobody to ask, so it says -f out loud: that is the point of the rule.
+  "$HODOO" task rm "$probe" -f > /dev/null
+  "$HODOO" project detach "$p_personal" --stage "$a_build" > /dev/null
   expect 4 "$("$HODOO" project stages "$p_personal" | count)" "the stray stage was detached again"
 
   # What Odoo does refuse: an id that is gone, and a field it does not have.
   set +e
-  "$HODOO" task get 999999999 > /dev/null 2>/tmp/hodoo-scenario-error.json
+  "$HODOO" task show 999999999 > /dev/null 2>/tmp/hodoo-scenario-error.json
   local missing=$?
-  "$HODOO" call project.task read --json '{"fields":["no_such_field"]}' \
+  "$HODOO" call project.task read --body '{"fields":["no_such_field"]}' \
     > /dev/null 2>>/tmp/hodoo-scenario-error.json
   local bad_field=$?
   set -e
@@ -581,103 +588,46 @@ EOF
 # --- read-only dashboard ---------------------------------------------------
 
 show() {
+  # The dashboard is for a person, so it unset the script's JSON mode and lets the
+  # CLI's own tables do the talking: nothing here parses output.
+  unset HODOO_OUTPUT
   auth
-  local projects
-  projects="$("$HODOO" call project.project search \
-    --json "{\"domain\":[[\"name\",\"like\",\"$MARKER\"]],\"order\":\"id\"}" | csv)"
 
-  if [ -z "$projects" ]; then
+  if [ "$("$HODOO" project ls "$MARKER" --limit 0 --no-headers | wc -l)" = "0" ]; then
     echo "no scenario data: run './startup-founder.sh up' first"
     return
   fi
 
-  step "clients"
-  "$HODOO" call res.partner search_read \
-    --json "{\"domain\":[[\"name\",\"like\",\"$MARKER\"]],\"fields\":[\"name\",\"email\",\"phone\"],\"order\":\"id\"}" \
-    | python3 -c '
-import json, sys
-for row in json.load(sys.stdin):
-    print("  %-40s %-28s %s" % (row["name"], row["email"] or "-", row["phone"] or ""))
-'
+  step "the founder"
+  "$HODOO" whoami
+  "$HODOO" project ls "$MARKER" --limit 0
 
-  step "projects"
-  printf '  %-44s %-10s %-7s %-6s %s\n' name visibility tasks open overdue
+  step "boards"
   local project
-  for project in $(printf '%s' "$projects" | tr ',' ' '); do
-    "$HODOO" project get "$project" | python3 -c '
-import json, subprocess, sys
-from datetime import date
-p = json.load(sys.stdin)
-tasks = json.loads(subprocess.run(
-    ["'"$HODOO"'", "task", "ls", "--project", str(p["id"]), "--limit", "0"],
-    capture_output=True, text=True, check=True).stdout)
-overdue = [t for t in tasks if not t["is_closed"] and t["date_deadline"]
-           and t["date_deadline"][:10] < date.today().isoformat()]
-print("  %-44s %-10s %-7s %-6s %s" % (p["name"], p["privacy_visibility"],
-                                     p["task_count"], p["open_task_count"], len(overdue)))
-'
+  for project in "Acme Manufacturing" "Nordwind Studio" "Product - SaaS MVP" "Personal Life"; do
+    "$HODOO" board "$project"
+    echo
   done
 
   step "overdue, worst first"
-  "$HODOO" task ls --name "$MARKER" --open --deadline-before "$(today 'today')" \
-    --order date_deadline --limit 0 | python3 -c '
-import json, sys
-from datetime import date
-for t in json.load(sys.stdin):
-    days = (date.today() - date.fromisoformat(t["date_deadline"][:10])).days
-    print("  %3dd late  %-44s assignees %s" % (days, t["name"], t["user_ids"]))
-'
+  "$HODOO" task ls "$MARKER" --overdue --order date_deadline --limit 0
 
-  step "blocked: state 04_waiting_normal, which Odoo derives from open dependencies"
-  local blocked_task
-  for blocked_task in $("$HODOO" task ls --name "$MARKER" --state waiting --limit 0 | ids); do
-    local blocked_name blockers dep
-    blocked_name="$("$HODOO" task get "$blocked_task" | field .name)"
-    blockers=""
-    # `task deps` answers bare ids, so they are joined rather than read as records.
-    for dep in $("$HODOO" task deps "$blocked_task" | csv | tr ',' ' '); do
-      blockers="${blockers:+$blockers, }$("$HODOO" task get "$dep" | field .name)"
-    done
-    printf '  %-44s blocked by %s\n' "$blocked_name" "${blockers:-nothing: the state was set by hand}"
-  done
-  "$HODOO" task ls --name "$MARKER" --state changes-requested --limit 0 \
-    | python3 -c 'import json,sys; [print("  changes requested  %s" % t["name"]) for t in json.load(sys.stdin)]'
-
-  step "dependencies: what waits on what"
-  local task
-  for task in $("$HODOO" task ls --name "$MARKER" --limit 0 | ids); do
-    local deps
-    deps="$("$HODOO" task deps "$task" \
-      | python3 -c 'import json,sys; print(" ".join(str(i) for i in json.load(sys.stdin)))')"
-    if [ -n "${deps// /}" ]; then
-      local name dep
-      name="$("$HODOO" task get "$task" | field .name)"
-      for dep in $deps; do
-        printf '  %-44s waits on  %s\n' "$name" "$("$HODOO" task get "$dep" | field .name)"
-      done
-    fi
-  done
+  step "waiting or blocked"
+  "$HODOO" task ls "$MARKER" --state waiting --limit 0
+  "$HODOO" task ls "$MARKER" --state changes-requested --limit 0
 
   step "milestones"
-  "$HODOO" call project.milestone search_read \
-    --json "{\"domain\":[[\"name\",\"like\",\"$MARKER\"]],\"fields\":[\"name\",\"deadline\",\"is_reached\",\"reached_date\"],\"order\":\"deadline\"}" \
-    | python3 -c '
-import json, sys
-for m in json.load(sys.stdin):
-    state = "reached %s" % m["reached_date"] if m["is_reached"] else "open"
-    print("  %s  %-20s %s" % (m["deadline"], state, m["name"]))
-'
+  for project in "Acme Manufacturing" "Nordwind Studio" "Product - SaaS MVP"; do
+    "$HODOO" milestone ls --project "$project"
+  done
 
-  step "personal life"
-  # --name filters task titles, so the project is selected by its own name first.
-  "$HODOO" task ls --project "$("$HODOO" project ls --name "Personal Life $MARKER" --limit 1 \
-    | field '[0].id')" --limit 0 --order date_deadline \
-    | python3 -c '
-import json, sys
-for t in json.load(sys.stdin):
-    due = (t["date_deadline"] or "")[:10] or "no deadline"
-    print("  %-12s %-16s %s" % (due, t["state"], t["name"]))
-'
+  step "what waits on what"
+  "$HODOO" task deps "Homepage build $MARKER"
+  "$HODOO" task deps "Accessibility audit $MARKER"
+  "$HODOO" task deps "Stripe billing $MARKER"
+
+  step "one task in full"
+  "$HODOO" task show "Product page build $MARKER"
 }
 
 case "${1:-}" in

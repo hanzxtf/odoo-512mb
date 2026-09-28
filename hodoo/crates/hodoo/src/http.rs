@@ -126,7 +126,14 @@ impl Transport {
     fn json_or_unexpected(status: u16, text: String) -> Result<Value> {
         serde_json::from_str(&text).map_err(|_| Error::UnexpectedResponse {
             status,
-            body: Error::truncate(text),
+            // An empty body is common (a bare 404) and useless to read as "": say so
+            // instead, and name the likely cause.
+            body: if text.trim().is_empty() {
+                "an empty body: does this server serve /json/2, and does the model exist?"
+                    .to_owned()
+            } else {
+                Error::truncate(text)
+            },
         })
     }
 
