@@ -23,6 +23,7 @@ use serde_json::{Value, json};
 use crate::Failure;
 use crate::cli::Global;
 use crate::output::{ColorChoice, Column, Output, Table, human_due, plain_text};
+use crate::refs;
 
 /// Everything a command needs: where to talk, and how to show it.
 pub struct Ctx {
@@ -294,6 +295,27 @@ pub fn clip(text: &str, max: usize) -> String {
         return text.to_owned();
     }
     text.chars().take(max.saturating_sub(1)).collect::<String>() + "…"
+}
+
+/// Serializes a value for JSON output, or null: a display detail must never fail
+/// the command it belongs to.
+#[must_use]
+pub fn as_json<T: serde::Serialize>(value: &T) -> Value {
+    serde_json::to_value(value).unwrap_or(Value::Null)
+}
+
+/// Resolves tag names, creating the ones that do not exist yet, so `--tag urgent`
+/// works on a fresh database.
+///
+/// # Errors
+///
+/// Any error of the underlying tag search or create.
+pub async fn tags_of(ctx: &Ctx, tags: &[String]) -> Result<Vec<Id<hodoo::Tag>>, Failure> {
+    let mut ids = Vec::new();
+    for tag in tags {
+        ids.push(refs::tag(&ctx.client, tag).await?);
+    }
+    Ok(ids)
 }
 
 /// `--limit 0` means "no limit".

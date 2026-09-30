@@ -1,11 +1,13 @@
 //! `hodoo task …`
 
-use hodoo::{Id, Priority, Task, TaskFields, TaskFilter, TaskId, TaskState};
+use hodoo::{Priority, Task, TaskFields, TaskFilter, TaskId, TaskState};
 use serde_json::{Map, Value, json};
 
 use crate::Failure;
 use crate::cli::{PriorityArg, StateArg, TaskCreateArgs, TaskFieldArgs, TaskLsArgs};
-use crate::cmd::{self, Ctx, chatter_block, clip, limit_of, name_of, names, offset_of};
+use crate::cmd::{
+    self, Ctx, as_json, chatter_block, clip, limit_of, name_of, names, offset_of, tags_of,
+};
 use crate::output::{Cell, Column, Mode, Style, Table, human_due, plain_text};
 use crate::prompt::{self, Ask};
 use crate::refs::{self, Ref};
@@ -640,15 +642,6 @@ async fn apply(
     Ok(())
 }
 
-/// Resolves tag names, creating the ones that do not exist yet.
-async fn tags_of(ctx: &Ctx, tags: &[String]) -> Result<Vec<Id<hodoo::Tag>>, Failure> {
-    let mut ids = Vec::new();
-    for tag in tags {
-        ids.push(refs::tag(&ctx.client, tag).await?);
-    }
-    Ok(ids)
-}
-
 /// Odoo's state value for a flag.
 #[must_use]
 pub fn state_of(state: StateArg) -> TaskState {
@@ -706,9 +699,4 @@ fn priority_style(task: &Task) -> Option<Style> {
         Priority::High => Some(Style::Yellow),
         _ => None,
     }
-}
-
-/// Serializes a value, or null: a display detail must never fail a command.
-fn as_json<T: serde::Serialize>(value: &T) -> Value {
-    serde_json::to_value(value).unwrap_or(Value::Null)
 }

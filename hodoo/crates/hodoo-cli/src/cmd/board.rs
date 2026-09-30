@@ -129,7 +129,7 @@ async fn stage_lines(
         let emptiness = by_stage.get(&stage_id).map_or(0, Vec::len);
         // Wide enough for real stage names ("In Progress (scenario)"), narrow enough
         // that the tasks still start on the same column.
-        let mut line = format!("  {:<24} {:>3}  ", clip_head(&name, 24), emptiness);
+        let mut line = format!("  {:<24} {:>3}  ", cmd::clip(&name, 24), emptiness);
         if let Some(in_stage) = by_stage.get(&stage_id) {
             let said: Vec<String> = in_stage.iter().map(|task| describe(task, now)).collect();
             line.push_str(&said.join(" · "));
@@ -149,17 +149,10 @@ fn describe(task: &Task, now: chrono::DateTime<chrono::Utc>) -> String {
         "#{} {}{} ({}, {})",
         task.id.get(),
         marker,
-        clip_head(&plain_text(&task.name), 40),
+        cmd::clip(&plain_text(&task.name), 40),
         crate::cmd::task::priority_word(task.priority),
         due
     )
-}
-
-fn clip_head(text: &str, max: usize) -> String {
-    if text.chars().count() <= max {
-        return text.to_owned();
-    }
-    text.chars().take(max.saturating_sub(1)).collect::<String>() + "…"
 }
 
 /// The tasks of a project, optionally only mine, optionally including closed ones.

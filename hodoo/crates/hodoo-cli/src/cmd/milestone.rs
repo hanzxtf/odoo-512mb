@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use crate::Failure;
 use crate::cli::MilestoneCmd;
-use crate::cmd::Ctx;
+use crate::cmd::{Ctx, as_json};
 use crate::output::{Column, Mode, Style, Table, show_date};
 use crate::prompt::{self, Ask};
 use crate::refs::{self, Ref};
@@ -122,9 +122,4 @@ pub async fn run(ctx: &Ctx, command: &MilestoneCmd) -> Result<(), Failure> {
             Ok(())
         }
     }
-}
-
-/// Serializes a value, or null: a display detail must never fail a command.
-fn as_json<T: serde::Serialize>(value: &T) -> Value {
-    serde_json::to_value(value).unwrap_or(Value::Null)
 }

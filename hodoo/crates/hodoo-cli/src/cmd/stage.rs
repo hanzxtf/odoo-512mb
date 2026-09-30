@@ -6,7 +6,7 @@ use serde_json::{Map, Value, json};
 
 use crate::Failure;
 use crate::cli::{ProjectStagesCmd, TaskStagesCmd};
-use crate::cmd::{self, Ctx};
+use crate::cmd::{self, Ctx, as_json};
 use crate::output::Mode;
 use crate::output::{Column, Table};
 use crate::prompt;
@@ -311,11 +311,6 @@ pub async fn run_project_stages(ctx: &Ctx, command: &ProjectStagesCmd) -> Result
             Ok(())
         }
     }
-}
-
-/// Serializes a value, or null: a display detail must never fail a command.
-fn as_json<T: serde::Serialize>(value: &T) -> Value {
-    serde_json::to_value(value).unwrap_or(Value::Null)
 }
 
 /// `--name/--sequence/--fold/--unfold` as fields, plus the same as a dry-run preview.

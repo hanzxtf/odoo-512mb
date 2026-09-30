@@ -5,7 +5,9 @@ use serde_json::{Map, Value, json};
 
 use crate::Failure;
 use crate::cli::{ProjectCreateArgs, ProjectFieldArgs, ProjectLsArgs, VisibilityArg};
-use crate::cmd::{self, Ctx, chatter_block, clip, limit_of, name_of, names, offset_of};
+use crate::cmd::{
+    self, Ctx, as_json, chatter_block, clip, limit_of, name_of, names, offset_of, tags_of,
+};
 use crate::output::{Column, Mode, Style, Table, plain_text, show_date};
 use crate::prompt::{self, Ask};
 use crate::refs::{self, Ref};
@@ -625,15 +627,6 @@ fn visibility_word(visibility: VisibilityArg) -> &'static str {
     }
 }
 
-/// Resolves tag names, creating the ones that do not exist yet.
-async fn tags_of(ctx: &Ctx, tags: &[String]) -> Result<Vec<Id<hodoo::Tag>>, Failure> {
-    let mut ids = Vec::new();
-    for tag in tags {
-        ids.push(refs::tag(&ctx.client, tag).await?);
-    }
-    Ok(ids)
-}
-
 /// A name for an id, or a dash.
 fn lookup(names: &std::collections::HashMap<i64, String>, id: Option<i64>) -> String {
     id.and_then(|id| names.get(&id).cloned())
@@ -643,9 +636,4 @@ fn lookup(names: &std::collections::HashMap<i64, String>, id: Option<i64>) -> St
 /// A finished project is dimmed: it needs no attention.
 fn finished(project: &Project) -> Option<Style> {
     (project.open_task_count == 0 && project.task_count > 0).then_some(Style::Dim)
-}
-
-/// Serializes a value, or null: a display detail must never fail a command.
-fn as_json<T: serde::Serialize>(value: &T) -> Value {
-    serde_json::to_value(value).unwrap_or(Value::Null)
 }

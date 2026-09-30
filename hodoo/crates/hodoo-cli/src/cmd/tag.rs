@@ -1,10 +1,8 @@
 //! `hodoo tag ls`
 
-use serde_json::Value;
-
 use crate::Failure;
 use crate::cli::TagCmd;
-use crate::cmd::Ctx;
+use crate::cmd::{Ctx, as_json};
 use crate::output::{Column, Mode, Table};
 
 /// Dispatches the tag subcommands.
@@ -31,9 +29,4 @@ pub async fn run(ctx: &Ctx, command: &TagCmd) -> Result<(), Failure> {
             Ok(ctx.out.print_table(&table)?)
         }
     }
-}
-
-/// Serializes a value, or null: a display detail must never fail a command.
-fn as_json<T: serde::Serialize>(value: &T) -> Value {
-    serde_json::to_value(value).unwrap_or(Value::Null)
 }
