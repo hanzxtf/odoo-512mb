@@ -34,7 +34,7 @@ pub struct Milestone {
     #[serde(default)]
     pub name: String,
     /// The project it belongs to (`project_id`).
-    #[serde(rename = "project_id", deserialize_with = "de::opt_id")]
+    #[serde(default, rename = "project_id", deserialize_with = "de::opt_id")]
     pub project: Option<ProjectId>,
     /// Deadline (`deadline`), a date.
     #[serde(
