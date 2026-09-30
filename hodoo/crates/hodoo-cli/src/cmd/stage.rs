@@ -73,6 +73,74 @@ pub async fn run_task_stages(ctx: &Ctx, command: &TaskStagesCmd) -> Result<(), F
             }
             Ok(())
         }
+
+        TaskStagesCmd::Update {
+            stage,
+            name,
+            sequence,
+            fold,
+            unfold,
+        } => {
+            let id = refs::stage(&ctx.client, &Ref::parse(stage), None).await?;
+            let (fields, preview) = stage_changes(name, sequence, *fold, *unfold)?;
+            let name = cmd::name_or_id(ctx, "project.task.type", id.get()).await;
+            if ctx.dry_run {
+                return Ok(prompt::preview(
+                    &ctx.out,
+                    &format!("update task stage {name}"),
+                    &Value::Object(preview),
+                )?);
+            }
+            ctx.client.stages().update(id, fields).await?;
+            ctx.out.changed(id.get())?;
+            ctx.out
+                .note(&format!("updated  task stage #{}  {name}", id.get()))?;
+            Ok(())
+        }
+
+        TaskStagesCmd::Rm { stage, force } => {
+            let id = refs::stage(&ctx.client, &Ref::parse(stage), None).await?;
+            let name = cmd::name_or_id(ctx, "project.task.type", id.get()).await;
+            if let Some(what) = in_use(
+                ctx,
+                "project.task",
+                json!([["stage_id", "=", id.get()]]),
+                "task",
+            )
+            .await
+            {
+                return Err(Failure::Usage(format!(
+                    "refusing to delete task stage #{id} \"{name}\": {what}. Move them first \
+                     (hodoo task move <task> --stage <other>), or archive the stage: hodoo \
+                     call project.task.type write --ids {id} \
+                     --body '{{\"vals\":{{\"active\":false}}}}'"
+                )));
+            }
+
+            // A task stage is one record: deleting it takes the column away from every
+            // project that offered it, which is not the same as `project detach`.
+            let mut action = format!("delete task stage #{id} \"{name}\"");
+            let offered = cmd::count_of(
+                ctx,
+                "project.project",
+                json!([["type_ids", "in", [id.get()]]]),
+            )
+            .await
+            .filter(|count| *count > 0);
+            if let Some(projects) = offered {
+                let plural = if projects == 1 { "" } else { "s" };
+                action.push_str(&format!(" and detach it from {projects} project{plural}"));
+            }
+            if ctx.dry_run {
+                return Ok(ctx.out.note(&format!("would {action}"))?);
+            }
+            prompt::Ask::from_flags(*force, ctx.no_input).destroy(&action)?;
+            ctx.client.stages().delete(id).await?;
+            ctx.out.removed(id.get())?;
+            ctx.out
+                .note(&format!("deleted  task stage #{}  {name}", id.get()))?;
+            Ok(())
+        }
     }
 }
 
@@ -83,12 +151,11 @@ pub async fn run_task_stages(ctx: &Ctx, command: &TaskStagesCmd) -> Result<(), F
 /// Any error of the calls behind them, plus [`Failure::Usage`] for a bad reference.
 pub async fn run_project_stages(ctx: &Ctx, command: &ProjectStagesCmd) -> Result<(), Failure> {
     match command {
-        ProjectStagesCmd::Ls { order, limit } => {
+        ProjectStagesCmd::Ls { limit } => {
             let stages = ctx
                 .client
                 .project_stages()
                 .list(hodoo::ProjectStageFilter {
-                    order: order.clone(),
                     limit: cmd::limit_of(*limit),
                     ..hodoo::ProjectStageFilter::default()
                 })
@@ -121,12 +188,13 @@ pub async fn run_project_stages(ctx: &Ctx, command: &ProjectStagesCmd) -> Result
                 }
             }
 
+            // No ACTIVE column: Odoo hides an archived stage from a search, so it could
+            // only ever read "yes". Archiving stays reachable through `hodoo call`.
             let mut table = Table::new(vec![
                 Column::number("ID"),
                 Column::text("STAGE").flexible(),
                 Column::number("SEQ"),
                 Column::text("FOLDED"),
-                Column::text("ACTIVE"),
                 Column::number("PROJECTS"),
             ]);
             for stage in &stages {
@@ -135,7 +203,6 @@ pub async fn run_project_stages(ctx: &Ctx, command: &ProjectStagesCmd) -> Result
                     stage.name.clone(),
                     stage.sequence.to_string(),
                     if stage.fold { "yes" } else { "no" }.to_owned(),
-                    if stage.active { "yes" } else { "no" }.to_owned(),
                     counts
                         .get(&stage.id.get())
                         .copied()
@@ -197,29 +264,8 @@ pub async fn run_project_stages(ctx: &Ctx, command: &ProjectStagesCmd) -> Result
             unfold,
         } => {
             let id = refs::project_stage(&ctx.client, &Ref::parse(stage)).await?;
-            let mut fields = hodoo::StageFields::default();
-            let mut preview = Map::new();
-            if let Some(name) = name {
-                fields.name = Some(name.clone());
-                preview.insert("name".into(), json!(name));
-            }
-            if let Some(sequence) = sequence {
-                fields.sequence = Some(*sequence);
-                preview.insert("sequence".into(), json!(sequence));
-            }
-            if *fold || *unfold {
-                fields.fold = Some(*fold);
-                preview.insert("fold".into(), json!(*fold));
-            }
-            if preview.is_empty() {
-                return Err(Failure::Usage(
-                    "nothing to change: pass a field, e.g. --name \"On Hold\"".to_owned(),
-                ));
-            }
-
-            let name = cmd::name_of(ctx, "project.project.stage", id.get())
-                .await?
-                .unwrap_or_else(|| format!("#{}", id.get()));
+            let (fields, preview) = stage_changes(name, sequence, *fold, *unfold)?;
+            let name = cmd::name_or_id(ctx, "project.project.stage", id.get()).await;
             if ctx.dry_run {
                 return Ok(prompt::preview(
                     &ctx.out,
@@ -236,22 +282,15 @@ pub async fn run_project_stages(ctx: &Ctx, command: &ProjectStagesCmd) -> Result
 
         ProjectStagesCmd::Rm { stage, force } => {
             let id = refs::project_stage(&ctx.client, &Ref::parse(stage)).await?;
-            let name = cmd::name_of(ctx, "project.project.stage", id.get())
-                .await?
-                .unwrap_or_else(|| format!("#{}", id.get()));
-            // Odoo refuses to delete a stage a project points at, so the CLI refuses
-            // first and says what has to move: a raw ValidationError tells nobody
-            // which project is in the way.
-            let projects =
-                cmd::count_of(ctx, "project.project", json!([["stage_id", "=", id.get()]]))
-                    .await
-                    .unwrap_or_default();
-            if projects > 0 {
-                let what = if projects == 1 {
-                    "1 project is in it".to_owned()
-                } else {
-                    format!("{projects} projects are in it")
-                };
+            let name = cmd::name_or_id(ctx, "project.project.stage", id.get()).await;
+            if let Some(what) = in_use(
+                ctx,
+                "project.project",
+                json!([["stage_id", "=", id.get()]]),
+                "project",
+            )
+            .await
+            {
                 return Err(Failure::Usage(format!(
                     "refusing to delete project stage #{id} \"{name}\": {what}. Move them \
                      first (hodoo project update <project> --stage <other>), or archive the \
@@ -277,4 +316,59 @@ pub async fn run_project_stages(ctx: &Ctx, command: &ProjectStagesCmd) -> Result
 /// Serializes a value, or null: a display detail must never fail a command.
 fn as_json<T: serde::Serialize>(value: &T) -> Value {
     serde_json::to_value(value).unwrap_or(Value::Null)
+}
+
+/// `--name/--sequence/--fold/--unfold` as fields, plus the same as a dry-run preview.
+///
+/// Both stage updates take the same flags because both models carry the same fields,
+/// so the flags are turned into them in one place.
+///
+/// # Errors
+///
+/// [`Failure::Usage`] when no field was passed: a command that would send nothing is
+/// an invocation to correct, not a silent no-op.
+fn stage_changes(
+    name: &Option<String>,
+    sequence: &Option<i64>,
+    fold: bool,
+    unfold: bool,
+) -> Result<(hodoo::StageFields, Map<String, Value>), Failure> {
+    let mut fields = hodoo::StageFields::default();
+    let mut preview = Map::new();
+    if let Some(name) = name {
+        fields.name = Some(name.clone());
+        preview.insert("name".into(), json!(name));
+    }
+    if let Some(sequence) = sequence {
+        fields.sequence = Some(*sequence);
+        preview.insert("sequence".into(), json!(sequence));
+    }
+    if fold || unfold {
+        fields.fold = Some(fold);
+        preview.insert("fold".into(), json!(fold));
+    }
+    if preview.is_empty() {
+        return Err(Failure::Usage(
+            "nothing to change: pass a field, e.g. --name \"On Hold\"".to_owned(),
+        ));
+    }
+    Ok((fields, preview))
+}
+
+/// What is still in a stage, as a sentence fragment, when something is.
+///
+/// Odoo refuses to delete a stage a record points at, and its answer names only the
+/// model: a `ValidationError` about `project.project` tells nobody which project is in
+/// the way. Both stage deletes count first and name it instead. `None` means nothing is
+/// in it, or that Odoo did not answer the count: an unknown count clears no guard, so
+/// the delete goes ahead and Odoo is the judge.
+async fn in_use(ctx: &Ctx, model: &str, domain: Value, noun: &str) -> Option<String> {
+    let count = cmd::count_of(ctx, model, domain)
+        .await
+        .filter(|count| *count > 0)?;
+    Some(if count == 1 {
+        format!("1 {noun} is in it")
+    } else {
+        format!("{count} {noun}s are in it")
+    })
 }

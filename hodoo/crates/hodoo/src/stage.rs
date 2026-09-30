@@ -183,4 +183,38 @@ impl<'a> Stages<'a> {
             .await?;
         Ok(stage)
     }
+
+    /// Renames, reorders, folds or archives a stage. Only the fields set are
+    /// written. Every project offering the stage sees the change: it is one record.
+    ///
+    /// # Errors
+    ///
+    /// Any error of [`Client::call`].
+    pub async fn update(&self, id: TaskStageId, fields: StageFields) -> Result<()> {
+        self.client
+            .call(
+                "project.task.type",
+                "write",
+                query::write(id.get(), fields.into()),
+            )
+            .await
+            .map(|_| ())
+    }
+
+    /// Deletes a stage, detaching it from every project that offered it.
+    ///
+    /// Odoo refuses this while a task sits in the stage (a `ValidationError` naming
+    /// the task model), so a caller that wants a friendly refusal has to count the
+    /// tasks first. `StageFields { active: Some(false), .. }` is the archive
+    /// alternative Odoo suggests.
+    ///
+    /// # Errors
+    ///
+    /// Any error of [`Client::call`], including Odoo's refusal.
+    pub async fn delete(&self, id: TaskStageId) -> Result<()> {
+        self.client
+            .call("project.task.type", "unlink", query::unlink(id.get()))
+            .await
+            .map(|_| ())
+    }
 }

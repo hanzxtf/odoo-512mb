@@ -122,7 +122,7 @@ invocation was wrong (bad flag, unknown reference, a delete without confirmation
 - **`hodoo help <command>`** and `--help` on anything explain that command, with
   examples; `--help` also lists the credential order and the exit codes.
 - **"Stage" means two different things, so the commands say which.** A task's stage
-  (`project task-stages ls|create`, `task create --stage`) is one of a project's kanban
+  (`project task-stages ls|create|update|rm`, `task create --stage`) is one of a project's kanban
   columns. A *project's* stage (`project stages ls|create|update|rm`, `project update
   --stage`) is one of a handful the whole server shares. `project attach` and `project
   detach` take `--task-stage`, because that is the kind they attach. Everything about a
@@ -234,14 +234,14 @@ Odoo's dates are `DateTime<Utc>`/`NaiveDate` rather than strings, and
 ## What it does not wrap, and the call that does
 
 The typed surface covers projects, tasks, task stages, project stages, tags, milestones
-and chatter. Everything else is one `call` — these are the ones that came up in practice,
+and chatter. Everything else is one `call` -- these are the ones that came up in practice,
 with what was verified against Odoo 19.0 rather than assumed.
 
 | Want | Call |
 |---|---|
 | Project from a template (repeatable setups) | `call project.project action_create_from_template --ids <tpl> --body '{"values":{...}}'` — see below |
 | Create a client contact | `call res.partner create --body '{"vals_list":[{"name":"Acme","is_company":true}]}'` — needs Contacts > Creation (`base.group_partner_manager`), which a project administrator does not have |
-| Archive a project stage | `call project.project.stage write --ids <id> --body '{"vals":{"active":false}}'` — what Odoo suggests when a project is still in the stage |
+| Archive a project stage | `call project.project.stage write --ids <id> --body '{"vals":{"active":false}}'` -- what Odoo suggests when a project is still in the stage |
 | Collaborators, project roles | `call project.collaborator ...` / `call project.role ...` |
 | Rollups and group-bys | `call project.task search_count --body '{"domain":[...]}'` |
 | Find your own user id | `hodoo whoami` (wraps `res.users/context_get`) |

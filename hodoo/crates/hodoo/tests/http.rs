@@ -551,3 +551,43 @@ async fn a_project_stage_is_renamed_and_deleted_by_id() {
         .await
         .expect("delete");
 }
+
+#[tokio::test]
+async fn a_task_stage_is_renamed_and_deleted_by_id() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/json/2/project.task.type/write"))
+        .and(body_partial_json(json!({
+            "ids": [11],
+            "vals": {"name": "Review", "sequence": 40, "fold": true}
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!(true)))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/json/2/project.task.type/unlink"))
+        .and(body_partial_json(json!({"ids": [11]})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!(true)))
+        .mount(&server)
+        .await;
+
+    let client = client(&server, "secret");
+    client
+        .stages()
+        .update(
+            hodoo::TaskStageId::new(11),
+            hodoo::StageFields {
+                name: Some("Review".into()),
+                sequence: Some(40),
+                fold: Some(true),
+                ..hodoo::StageFields::default()
+            },
+        )
+        .await
+        .expect("update");
+    client
+        .stages()
+        .delete(hodoo::TaskStageId::new(11))
+        .await
+        .expect("delete");
+}

@@ -79,6 +79,8 @@ hodoo project stages update <stage> [--name <N>] [--sequence <N>] [--fold|--unfo
 hodoo project stages rm <stage> [-f]
 hodoo project task-stages ls <project>   # the project's task stages, with open counts
 hodoo project task-stages create --name "Review" [--project <ref>] [--sequence 40] [--fold]
+hodoo project task-stages update <stage> [--name <N>] [--sequence <N>] [--fold|--unfold]
+hodoo project task-stages rm <stage> [-f]
 hodoo project attach <project> --task-stage <stage>…   # borrow a shared task stage
 hodoo project detach <project> --task-stage <stage>…
 hodoo project comment <project> --body "…" [--internal]
@@ -128,7 +130,9 @@ hodoo completions <shell>
   question nobody asks, and it made "stage" mean a task's stage at the top level and a
   project's stage one level down. `project task-stages` is scoped to a project like every
   other `project` subcommand, and both stage nouns now carry the same verbs (`ls`, `create`,
-  and for a project stage `update`, `rm`), which is also what makes `--help` show the CRUD.
+  `update`, `rm`), which is also what makes `--help` show the CRUD. Both `rm`s refuse while a
+  record is still in the stage and name it, because Odoo's own answer is a `ValidationError`
+  about the model.
 
 ## Structure
 

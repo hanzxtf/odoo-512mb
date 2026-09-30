@@ -170,6 +170,18 @@ pub async fn name_of(ctx: &Ctx, model: &str, id: i64) -> Result<Option<String>, 
     Ok(names(ctx, model, [id]).await?.remove(&id))
 }
 
+/// A record's name for a message, or `#id` when the lookup found nothing.
+///
+/// Best effort like [`name_of`]: a name is decoration in a sentence, and a key that
+/// may not read the model should not fail the command it was decorating.
+pub async fn name_or_id(ctx: &Ctx, model: &str, id: i64) -> String {
+    name_of(ctx, model, id)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| format!("#{id}"))
+}
+
 /// How many records match a domain, for the sentences that say what a delete takes
 /// with it.
 ///

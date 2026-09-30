@@ -43,8 +43,8 @@ Stages:
     name = "hodoo",
     version,
     about = "Manage Odoo 19 projects, tasks, task stages, milestones and tags",
-    long_about = "Talk to an Odoo 19 server over its JSON-2 API: projects, tasks, stages, \
-                  tags, milestones, subtasks, dependencies and chatter.\n\n\
+    long_about = "Talk to an Odoo 19 server over its JSON-2 API: projects, tasks, task \
+                  stages, tags, milestones, subtasks, dependencies and chatter.\n\n\
                   Reads are surgical (the client only asks for the fields it shows), writes \
                   are one call each, and anything without a command of its own is one \
                   `hodoo call` away.",
@@ -741,6 +741,50 @@ pub enum TaskStagesCmd {
         #[arg(long)]
         fold: bool,
     },
+
+    /// Rename, reorder or fold a task stage, in every project that offers it
+    #[command(
+        long_about = "Only the flags you pass change. A task stage is one record shared \
+                            between the projects that offer it, so a rename shows up in all of \
+                            them.\n\nExamples:\n  hodoo project task-stages update \"Review\" --name \
+                            \"Code review\" --sequence 45\n  hodoo project task-stages update \"Done\" \
+                            --fold"
+    )]
+    Update {
+        /// Task stage id or name
+        #[arg(value_name = "STAGE")]
+        stage: String,
+        /// New name
+        #[arg(long, value_name = "NAME")]
+        name: Option<String>,
+        /// New sort order
+        #[arg(long, value_name = "N")]
+        sequence: Option<i64>,
+        /// Fold the stage in the kanban
+        #[arg(long, conflicts_with = "unfold")]
+        fold: bool,
+        /// Unfold it again
+        #[arg(long)]
+        unfold: bool,
+    },
+
+    /// Delete a task stage; refused while a task is in it
+    #[command(
+        long_about = "Odoo refuses to delete a stage a task sits in, so this says so before \
+                            asking: move those tasks with `hodoo task move <task> --stage <other>` \
+                            first, or archive the stage instead. A delete detaches the stage from \
+                            every project that offered it; `project detach` removes it from one.\n\n\
+                            Examples:\n  hodoo project task-stages rm \"Review\"\n  hodoo project \
+                            task-stages rm \"Review\" -f"
+    )]
+    Rm {
+        /// Task stage id or name
+        #[arg(value_name = "STAGE")]
+        stage: String,
+        /// Do not ask; delete
+        #[arg(short = 'f', long)]
+        force: bool,
+    },
 }
 
 /// Project stage commands (`project.project.stage`).
@@ -751,9 +795,6 @@ pub enum ProjectStagesCmd {
         long_about = "Examples:\n  hodoo project stages ls\n  hodoo project stages ls --limit 0"
     )]
     Ls {
-        /// Odoo order string, e.g. "sequence"
-        #[arg(long, value_name = "ORDER")]
-        order: Option<String>,
         /// Maximum rows; 0 means all
         #[arg(short = 'l', long, default_value_t = 0)]
         limit: u32,

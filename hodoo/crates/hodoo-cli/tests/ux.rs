@@ -721,13 +721,23 @@ async fn project_stages_are_listed_with_their_projects_and_created_globally() {
         .mount(&server)
         .await;
 
-    // The stub project is in "In Progress", so that row counts one project.
+    // The stub project is in "In Progress", so that row counts one project. There is
+    // no ACTIVE column: Odoo hides an archived stage from a search, so it could only
+    // ever read "yes".
     hodoo(&server)
         .args(["project", "stages", "ls"])
         .assert()
         .success()
         .stdout(predicate::str::contains("PROJECTS"))
-        .stdout(predicate::str::is_match(r"In Progress\s+15\s+no\s+yes\s+1").expect("regex"));
+        .stdout(predicate::str::contains("ACTIVE").not())
+        .stdout(predicate::str::is_match(r"In Progress\s+15\s+no\s+1").expect("regex"));
+
+    // --order was carried over from the top-level listing nobody used; nothing asks
+    // for an order, and Odoo's default (sequence, id) is the one a kanban wants.
+    hodoo(&server)
+        .args(["project", "stages", "ls", "--order", "sequence"])
+        .assert()
+        .code(2);
 
     // Every noun lists with `ls`, so a bare `stages` is an invocation to correct, not a
     // third way of asking.
@@ -855,6 +865,139 @@ async fn a_project_stage_is_renamed_folded_and_deleted_but_not_while_in_use() {
         .assert()
         .success()
         .stderr(predicate::str::contains("#3"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_project_stage_is_found_by_a_partial_name_or_refused_by_name() {
+    let server = server().await;
+    // The stage lookup asks Odoo for names containing what was typed, so a partial
+    // name resolves and a name matching nothing is "no match", not "matches 4".
+    let found = |request: &Request| {
+        let asked = request
+            .body_json::<Value>()
+            .ok()
+            .and_then(|body| body["domain"][0][2].as_str().map(str::to_owned))
+            .unwrap_or_default();
+        if "in progress".contains(&asked.to_lowercase()) {
+            ResponseTemplate::new(200).set_body_json(json!([{
+                "id": 2,
+                "name": "In Progress",
+                "sequence": 15,
+                "fold": false,
+                "color": 0,
+                "active": true
+            }]))
+        } else {
+            ResponseTemplate::new(200).set_body_json(json!([]))
+        }
+    };
+    Mock::given(method("POST"))
+        .and(path("/json/2/project.project.stage/search_read"))
+        .respond_with(found)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/json/2/project.project.stage/write"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!(true)))
+        .mount(&server)
+        .await;
+
+    hodoo(&server)
+        .args(["project", "stages", "update", "prog", "--sequence", "16"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("#2"));
+
+    hodoo(&server)
+        .args(["project", "stages", "update", "nothing-like-this", "--fold"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("no project stage matches"))
+        .stderr(predicate::str::contains("hodoo project stages ls"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_task_stage_is_renamed_folded_and_deleted_but_not_while_in_use() {
+    let server = server().await;
+    Mock::given(method("POST"))
+        .and(path("/json/2/project.task.type/write"))
+        .and(body_partial_json(json!({
+            "ids": [11],
+            "vals": {"name": "Review", "sequence": 40, "fold": true}
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!(true)))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/json/2/project.task.type/unlink"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!(true)))
+        .mount(&server)
+        .await;
+    // Stage #11 holds one task, so Odoo refuses the delete; stage #12 is empty.
+    let counted = |request: &Request| {
+        let asked = request
+            .body_json::<Value>()
+            .ok()
+            .and_then(|body| body["domain"][0][2].as_i64())
+            .unwrap_or_default();
+        ResponseTemplate::new(200).set_body_json(json!(i64::from(asked == 11)))
+    };
+    Mock::given(method("POST"))
+        .and(path("/json/2/project.task/search_count"))
+        .respond_with(counted)
+        .mount(&server)
+        .await;
+    // ...and one project offers stage #12, which the delete names.
+    Mock::given(method("POST"))
+        .and(path("/json/2/project.project/search_count"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!(1)))
+        .mount(&server)
+        .await;
+
+    hodoo(&server)
+        .args([
+            "project",
+            "task-stages",
+            "update",
+            "11",
+            "--name",
+            "Review",
+            "--sequence",
+            "40",
+            "--fold",
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("#11"));
+
+    hodoo(&server)
+        .args(["project", "task-stages", "update", "11"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("nothing to change"));
+
+    // A task is in it: name the task's move, not Odoo's ValidationError.
+    hodoo(&server)
+        .args(["project", "task-stages", "rm", "11"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("1 task is in it"))
+        .stderr(predicate::str::contains("hodoo task move"));
+
+    // The dry run names what goes with it: the stage is one record, so deleting it
+    // takes the column away from the project that offered it.
+    hodoo(&server)
+        .args(["project", "task-stages", "rm", "12", "-n"])
+        .assert()
+        .success()
+        .stdout(predicate::str::is_empty())
+        .stderr(predicate::str::contains("detach it from 1 project"));
+
+    hodoo(&server)
+        .args(["project", "task-stages", "rm", "12", "-f"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("deleted  task stage #12"));
 }
 
 #[tokio::test(flavor = "multi_thread")]

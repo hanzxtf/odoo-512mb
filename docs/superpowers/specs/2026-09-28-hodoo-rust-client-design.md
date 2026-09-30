@@ -440,6 +440,8 @@ project ls|get|create|update|rm
 project stages ls|create|update|rm    the stages a project moves through (project.project.stage)
 project task-stages ls <id>           the task stages attached to this project (type_ids)
 project task-stages create --name <N> [--project <id>] [--sequence <N>] [--fold]
+project task-stages update <id> [--name <N>] [--sequence <N>] [--fold|--unfold]
+project task-stages rm <id> [-f]
 project attach <id> --task-stage <id>...   may repeat
 project detach <id> --task-stage <id>...   may repeat
 task ls|get|create|update|rm

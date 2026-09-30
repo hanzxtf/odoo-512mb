@@ -134,9 +134,13 @@ pub async fn project_stage(client: &Client, reference: &Ref) -> hodoo::Result<Pr
     match reference {
         Ref::Id(id) => Ok(Id::new(*id)),
         Ref::Name(name) => {
+            // Filtered by name in Odoo, like every other resolver: a name matching
+            // nothing then reads as "no match" instead of "matches all four", and a
+            // partial name still finds its stage.
             let found = client
                 .project_stages()
                 .list(ProjectStageFilter {
+                    name_contains: Some(name.clone()),
                     limit: Some(50),
                     ..ProjectStageFilter::default()
                 })

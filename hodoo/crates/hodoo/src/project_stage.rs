@@ -7,6 +7,7 @@
 //! as a task stage's, so [`StageFields`](crate::StageFields) serves both.
 
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 
 use crate::Client;
 use crate::de;
@@ -43,12 +44,23 @@ pub struct ProjectStage {
 /// A project stage filter.
 #[derive(Debug, Clone, Default)]
 pub struct ProjectStageFilter {
+    /// Substring match on the name, case-insensitive.
+    pub name_contains: Option<String>,
     /// Odoo's `order` string. Odoo's default is `sequence, id`.
     pub order: Option<String>,
     /// Maximum records to return.
     pub limit: Option<u32>,
     /// Records to skip.
     pub offset: Option<u32>,
+}
+
+impl ProjectStageFilter {
+    fn domain(&self) -> Value {
+        query::domain([self
+            .name_contains
+            .as_ref()
+            .map_or(Value::Null, |name| json!(["name", "ilike", name]))])
+    }
 }
 
 /// Access to `project.project.stage`.
@@ -62,8 +74,7 @@ impl<'a> ProjectStages<'a> {
         Self { client }
     }
 
-    /// Lists the project stages. There is nothing to filter on: a project stage
-    /// exists once and every project may use it.
+    /// Lists the project stages.
     ///
     /// # Errors
     ///
@@ -75,7 +86,7 @@ impl<'a> ProjectStages<'a> {
                 "project.project.stage",
                 "search_read",
                 query::search(
-                    query::domain([]),
+                    filter.domain(),
                     FIELDS,
                     filter.limit,
                     filter.offset,
