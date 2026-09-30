@@ -88,6 +88,9 @@ pub fn load(start: impl AsRef<Path>) -> std::io::Result<Option<BTreeMap<String, 
 }
 
 fn unquote(value: &str) -> String {
+    // Only a matching opening and closing quote is a delimiter; a value that
+    // merely contains or starts with a quote keeps it, rather than losing a
+    // character to a half-applied rule.
     let bytes = value.as_bytes();
     if bytes.len() >= 2
         && ((bytes[0] == b'"' && bytes[bytes.len() - 1] == b'"')

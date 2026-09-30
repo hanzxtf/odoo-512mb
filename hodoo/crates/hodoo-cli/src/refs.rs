@@ -344,6 +344,8 @@ pub fn when(text: &str) -> hodoo::Result<DateTime<Utc>> {
         Some('d') | None => Duration::days(amount),
         Some('w') => Duration::weeks(amount),
         Some('h') => Duration::hours(amount),
+        // A stray unit letter reads as days, the default, rather than refusing
+        // the deadline over a typo in what is usually `+3`.
         Some(_) => Duration::days(amount),
     };
 

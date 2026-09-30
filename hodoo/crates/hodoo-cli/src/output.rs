@@ -85,6 +85,9 @@ impl Output {
         };
 
         let stdout_is_tty = std::io::stdout().is_terminal();
+        // Precedence follows the conventions a terminal already honours: an
+        // explicit flag wins, then NO_COLOR/TERM=dumb suppress and CLICOLOR_FORCE
+        // forces, and only then does "is stdout a terminal" decide.
         let color = match color_flag.unwrap_or(ColorChoice::Auto) {
             ColorChoice::Always => true,
             ColorChoice::Never => false,
@@ -366,6 +369,8 @@ impl Style {
 
 fn terminal_width(stdout_is_tty: bool) -> usize {
     if !stdout_is_tty {
+        // A pipe or a file has no width to fit, and 0 tells the renderer to lay
+        // the table out for its content rather than guess at a terminal.
         return 0;
     }
     std::env::var("COLUMNS")
