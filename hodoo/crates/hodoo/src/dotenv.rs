@@ -59,7 +59,7 @@ pub fn read(path: impl AsRef<Path>) -> std::io::Result<BTreeMap<String, String>>
     std::fs::read_to_string(path).map(|text| parse(&text))
 }
 
-/// The nearest `.env` at or above `start`, up to [`MAX_DEPTH`] levels.
+/// The nearest `.env` at or above `start`, up to `MAX_DEPTH` levels.
 #[must_use]
 pub fn find(start: impl AsRef<Path>) -> Option<PathBuf> {
     let start = start.as_ref();
