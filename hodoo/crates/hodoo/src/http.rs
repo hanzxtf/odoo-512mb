@@ -167,9 +167,16 @@ impl Transport {
 }
 
 /// Deserializes a JSON-2 result, keeping the body when it does not fit.
+///
+/// Deserializes from a borrow, so a decode that succeeds does not first pay for
+/// a copy of the whole response: the body is moved into the error only when it is
+/// the one that failed to fit.
 pub(crate) fn decode<T: DeserializeOwned>(value: Value) -> Result<T> {
-    serde_json::from_value(value.clone()).map_err(|source| Error::Decode {
-        source,
-        body: value,
-    })
+    match T::deserialize(&value) {
+        Ok(decoded) => Ok(decoded),
+        Err(source) => Err(Error::Decode {
+            source,
+            body: value,
+        }),
+    }
 }
