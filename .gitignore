@@ -1,5 +1,4 @@
 .brooks-lint-history.json
 
-# Rust build output
-target/
+# Credentials, never in git
 .env*
