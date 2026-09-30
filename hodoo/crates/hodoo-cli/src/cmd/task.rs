@@ -456,20 +456,23 @@ pub async fn comment(ctx: &Ctx, text: &str, body: &str, internal: bool) -> Resul
 /// `hodoo task messages <task>`
 pub async fn messages(ctx: &Ctx, text: &str, limit: u32) -> Result<(), Failure> {
     let id = refs::task(&ctx.client, &Ref::parse(text)).await?;
-    let rows = ctx
-        .client
-        .call(
-            "mail.message",
-            "search_read",
-            json!({
-                "domain": [["model", "=", "project.task"], ["res_id", "=", id.get()]],
-                "fields": ["body", "author_id", "date", "message_type"],
-                "order": "id asc",
-                "limit": limit,
-            }),
-        )
-        .await?;
+    // JSON wants Odoo's own rows, oldest first; the table wants the flattened
+    // shape. Read only the one this mode prints, so a human run does not first
+    // fetch a set of rows it then throws away.
     if ctx.out.mode() == Mode::Json {
+        let rows = ctx
+            .client
+            .call(
+                "mail.message",
+                "search_read",
+                json!({
+                    "domain": [["model", "=", "project.task"], ["res_id", "=", id.get()]],
+                    "fields": ["body", "author_id", "date", "message_type"],
+                    "order": "id asc",
+                    "limit": limit,
+                }),
+            )
+            .await?;
         return Ok(ctx.out.print_json(&rows)?);
     }
     let flattened = cmd::chatter(ctx, "project.task", id.get(), limit).await?;
