@@ -228,31 +228,30 @@ async fn from_template(ctx: &Ctx, template: &str, args: &ProjectCreateArgs) -> R
 
     // Odoo shifts a copied project to today and keeps the template's duration, but it
     // cannot be given a start date alone: passing one without an end is a server-side
-    // error, so the end is worked out here from the template's own dates.
-    match (&args.fields.start, &args.fields.end) {
+    // error, so the end is worked out here from the template's own dates. Both dates
+    // are parsed here too, so a malformed one is a usage error, not Odoo's.
+    let start = args.fields.start.as_deref().map(refs::date).transpose()?;
+    let end = args.fields.end.as_deref().map(refs::date).transpose()?;
+    match (start, end) {
         (Some(start), Some(end)) => {
-            values.insert("date_start".into(), json!(start));
-            values.insert("date".into(), json!(end));
-            preview.insert("starts".into(), json!(start));
-            preview.insert("ends".into(), json!(end));
+            values.insert("date_start".into(), json!(start.to_string()));
+            values.insert("date".into(), json!(end.to_string()));
+            preview.insert("starts".into(), json!(start.to_string()));
+            preview.insert("ends".into(), json!(end.to_string()));
         }
         (Some(start), None) => {
-            let start_date = refs::date(start)?;
-            let end_date = match (source.date_start, source.date) {
-                (Some(from), Some(to)) => start_date + (to - from),
-                _ => start_date,
+            let end = match (source.date_start, source.date) {
+                (Some(from), Some(to)) => start + (to - from),
+                _ => start,
             };
-            values.insert("date_start".into(), json!(start_date.to_string()));
-            values.insert("date".into(), json!(end_date.to_string()));
-            preview.insert("starts".into(), json!(start_date.to_string()));
-            preview.insert(
-                "ends".into(),
-                json!(format!("{end_date} (template duration)")),
-            );
+            values.insert("date_start".into(), json!(start.to_string()));
+            values.insert("date".into(), json!(end.to_string()));
+            preview.insert("starts".into(), json!(start.to_string()));
+            preview.insert("ends".into(), json!(format!("{end} (template duration)")));
         }
         (None, Some(end)) => {
-            values.insert("date".into(), json!(end));
-            preview.insert("ends".into(), json!(end));
+            values.insert("date".into(), json!(end.to_string()));
+            preview.insert("ends".into(), json!(end.to_string()));
         }
         (None, None) => {}
     }
