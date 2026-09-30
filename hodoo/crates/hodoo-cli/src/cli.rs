@@ -906,7 +906,7 @@ pub enum MilestoneCmd {
 
     /// Delete a milestone
     #[command(
-        long_about = "Asks first unless -f/--force is passed.\n\nExamples:\n  hodoo                             milestone rm 12 -f"
+        long_about = "Asks first unless -f/--force is passed.\n\nExamples:\n  hodoo milestone rm 12 -f"
     )]
     Rm {
         /// Milestone id
