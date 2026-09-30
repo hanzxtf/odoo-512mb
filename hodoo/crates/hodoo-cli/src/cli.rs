@@ -30,14 +30,19 @@ Exit codes:
 References:
   Anywhere a project, task, stage, milestone, user or tag is expected, an id or a
   name works: `--project 49`, `--project acme`, `--stage Review`, `--tag urgent`.
-  A name that matches nothing says so; one that matches several lists them.";
+  A name that matches nothing says so; one that matches several lists them.
+
+Stages:
+  A task's stage (`--stage` on a task, `hodoo project task-stages`) is a kanban column
+  of its project. A project's stage (`--stage` on a project, `hodoo project stages`) is
+  one of a handful the whole server shares. Different models, both by name or id.";
 
 /// Manage Odoo 19 projects, tasks and everything around them.
 #[derive(Debug, Parser)]
 #[command(
     name = "hodoo",
     version,
-    about = "Manage Odoo 19 projects, tasks, stages, milestones and tags",
+    about = "Manage Odoo 19 projects, tasks, task stages, milestones and tags",
     long_about = "Talk to an Odoo 19 server over its JSON-2 API: projects, tasks, stages, \
                   tags, milestones, subtasks, dependencies and chatter.\n\n\
                   Reads are surgical (the client only asks for the fields it shows), writes \
@@ -150,10 +155,6 @@ pub enum Command {
     #[command(subcommand)]
     Task(TaskCmd),
 
-    /// Task stages (the columns of a kanban)
-    #[command(subcommand)]
-    Stage(StageCmd),
-
     /// Milestones
     #[command(subcommand)]
     Milestone(MilestoneCmd),
@@ -258,30 +259,45 @@ pub enum ProjectCmd {
         force: bool,
     },
 
-    /// The task stages attached to a project, with what is in each
+    /// The stages a project can be in (`project.project.stage`), one per project
     #[command(
-        long_about = "Shows the project's stages in order, how many open tasks each \
-                            holds, and whether it is folded.\n\nExamples:\n  hodoo project \
-                            stages acme"
+        long_about = "A project's stage is a different thing from a task's stage: it is \
+                            global, not per project, and a project points at exactly one. Odoo \
+                            ships four and a team rarely adds a fifth.\n\nMoving a project into one \
+                            is `project update <project> --stage <stage>`, not a command here: the \
+                            stage is a property of the project.\n\nExamples:\n  hodoo project stages \
+                            ls\n  hodoo project stages create --name \"On Hold\" --sequence 17"
     )]
     Stages {
-        /// Project id or name
-        #[arg(value_name = "PROJECT")]
-        project: String,
+        #[command(subcommand)]
+        command: ProjectStagesCmd,
+    },
+
+    /// The task stages a project offers (`project.task.type`)
+    #[command(
+        long_about = "The kanban columns of a project: in order, how many open tasks each \
+                            holds, and whether it is folded. A task can only sit in a stage its \
+                            project offers, which is why creating one attaches it.\n\nExamples:\n  \
+                            hodoo project task-stages ls acme\n  hodoo project task-stages create \
+                            --name \"Review\" --project acme --sequence 40"
+    )]
+    TaskStages {
+        #[command(subcommand)]
+        command: TaskStagesCmd,
     },
 
     /// Attach a shared task stage to a project
     #[command(
         long_about = "A task can only sit in a stage its project offers, so a stage \
                             shared with another project has to be attached first.\n\nExamples:\n  \
-                            hodoo project attach acme --stage Review"
+                            hodoo project attach acme --task-stage Review"
     )]
     Attach {
         /// Project id or name
         #[arg(value_name = "PROJECT")]
         project: String,
-        /// Stage id or name; repeatable
-        #[arg(long = "stage", value_name = "STAGE", required = true)]
+        /// Task stage id or name; repeatable
+        #[arg(long = "task-stage", value_name = "STAGE", required = true)]
         stages: Vec<String>,
     },
 
@@ -289,14 +305,14 @@ pub enum ProjectCmd {
     #[command(
         long_about = "Removes the stage from this project only; tasks already in it \
                             stay where they are.\n\nExamples:\n  hodoo project detach acme \
-                            --stage Review"
+                            --task-stage Review"
     )]
     Detach {
         /// Project id or name
         #[arg(value_name = "PROJECT")]
         project: String,
-        /// Stage id or name; repeatable
-        #[arg(long = "stage", value_name = "STAGE", required = true)]
+        /// Task stage id or name; repeatable
+        #[arg(long = "task-stage", value_name = "STAGE", required = true)]
         stages: Vec<String>,
     },
 
@@ -690,26 +706,26 @@ pub enum PriorityArg {
     Urgent,
 }
 
-/// Stage commands.
+/// Task stage commands (`project.task.type`).
 #[derive(Debug, Subcommand)]
-pub enum StageCmd {
-    /// List task stages
-    #[command(long_about = "Examples:\n  hodoo stage ls\n  hodoo stage ls --project acme")]
+pub enum TaskStagesCmd {
+    /// List a project's task stages, with the open work in each
+    #[command(
+        long_about = "Examples:\n  hodoo project task-stages ls acme\n  hodoo project \
+                            task-stages ls 49"
+    )]
     Ls {
-        /// Only stages attached to this project (id or name)
-        #[arg(long, value_name = "PROJECT")]
-        project: Option<String>,
-        /// Maximum rows; 0 means all
-        #[arg(short = 'l', long, default_value_t = 50)]
-        limit: u32,
+        /// Project id or name
+        #[arg(value_name = "PROJECT")]
+        project: String,
     },
 
     /// Create a task stage, attached to a project by default
     #[command(
         long_about = "A stage belongs to a project: without --project it is created \
                             unattached and no task can use it, so pass the project unless you \
-                            mean to share the stage later.\n\nExamples:\n  hodoo stage create \
-                            --name \"Review\" --project acme --sequence 40"
+                            mean to share the stage later.\n\nExamples:\n  hodoo project task-stages \
+                            create --name \"Review\" --project acme --sequence 40"
     )]
     Create {
         /// Stage name
@@ -724,6 +740,83 @@ pub enum StageCmd {
         /// Fold the stage in the kanban, for the end of the line
         #[arg(long)]
         fold: bool,
+    },
+}
+
+/// Project stage commands (`project.project.stage`).
+#[derive(Debug, Subcommand)]
+pub enum ProjectStagesCmd {
+    /// List the project stages, with how many projects sit in each
+    #[command(
+        long_about = "Examples:\n  hodoo project stages ls\n  hodoo project stages ls --limit 0"
+    )]
+    Ls {
+        /// Odoo order string, e.g. "sequence"
+        #[arg(long, value_name = "ORDER")]
+        order: Option<String>,
+        /// Maximum rows; 0 means all
+        #[arg(short = 'l', long, default_value_t = 0)]
+        limit: u32,
+    },
+
+    /// Create a project stage; every project can use it
+    #[command(
+        long_about = "A project stage is global, so there is nothing to attach and no \
+                            project uses it until `project update <project> --stage <stage>` says \
+                            so. Odoo ships To Do, In Progress, Done and Cancelled; a team rarely \
+                            needs a fifth.\n\nExamples:\n  hodoo project stages create --name \
+                            \"On Hold\" --sequence 17"
+    )]
+    Create {
+        /// Stage name
+        #[arg(long, value_name = "NAME")]
+        name: String,
+        /// Sort order within the kanban
+        #[arg(long, value_name = "N")]
+        sequence: Option<i64>,
+        /// Fold the stage in the kanban, for the end of the line
+        #[arg(long)]
+        fold: bool,
+    },
+
+    /// Rename, reorder or fold a project stage
+    #[command(
+        long_about = "Only the flags you pass change.\n\nExamples:\n  hodoo project stages update \
+                            \"In Progress\" --name \"WIP\" --sequence 20\n  hodoo project stages \
+                            update \"On Hold\" --fold"
+    )]
+    Update {
+        /// Project stage id or name
+        #[arg(value_name = "STAGE")]
+        stage: String,
+        /// New name
+        #[arg(long, value_name = "NAME")]
+        name: Option<String>,
+        /// New sort order
+        #[arg(long, value_name = "N")]
+        sequence: Option<i64>,
+        /// Fold the stage in the kanban
+        #[arg(long, conflicts_with = "unfold")]
+        fold: bool,
+        /// Unfold it again
+        #[arg(long)]
+        unfold: bool,
+    },
+
+    /// Delete a project stage; refused while a project is in it
+    #[command(
+        long_about = "Odoo refuses to delete a stage a project is in, so this says so \
+                            before asking: move the projects with `project update <project> --stage \
+                            <other>` first, or archive the stage instead.\n\nExamples:\n  hodoo \
+                            project stages rm \"On Hold\"\n  hodoo project stages rm \"On Hold\" -f"
+    )]
+    Rm {
+        /// Project stage id or name
+        #[arg(value_name = "STAGE")]
+        stage: String,
+        /// Do not ask; delete
+        #[arg(short = 'f', long)]
+        force: bool,
     },
 }
 

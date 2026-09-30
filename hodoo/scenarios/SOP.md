@@ -42,7 +42,8 @@ assertions
 ```
 
 - A task cannot be staged until its stages exist: **a fresh project has none.**
-- A stage belongs to a project; `stage create --project` attaches it.
+- A task stage belongs to a project; `project task-stages create --project` attaches it. A
+  *project* stage (`project stages ls`) is a different, global model.
 - Milestones need `allow_milestones` and dependencies need `allow_task_dependencies` on
   the project, which `project create --milestones --dependencies` sets.
 - Reference ids by variable from the moment they are created. Never re-find a record you

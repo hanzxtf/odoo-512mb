@@ -616,3 +616,287 @@ async fn a_delete_prompt_names_what_goes_with_it() {
             "would delete project #49 \"Acme Manufacturing - Website\" and its 8 tasks and 3 milestones",
         ));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn every_stage_command_lives_under_project() {
+    let server = server().await;
+    Mock::given(method("POST"))
+        .and(path("/json/2/project.project/read"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(odoo_project()))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/json/2/project.task.type/search_read"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
+            "id": 11,
+            "name": "Backlog",
+            "sequence": 10,
+            "fold": false,
+            "color": 0,
+            "active": true
+        }])))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/json/2/project.task/search_read"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(odoo_task(3)))
+        .mount(&server)
+        .await;
+
+    // A project's task stages, with what is in each.
+    hodoo(&server)
+        .args(["project", "task-stages", "ls", "49"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Backlog"));
+
+    // A stage is a project's business, so there is no top-level command for one.
+    hodoo(&server)
+        .args(["task-stages", "ls"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("task-stages"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_project_table_says_which_stage_the_project_is_in() {
+    let server = server().await;
+    Mock::given(method("POST"))
+        .and(path("/json/2/project.project/search_read"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(odoo_project()))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/json/2/project.project.stage/read"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
+            "id": 2,
+            "name": "In Progress"
+        }])))
+        .mount(&server)
+        .await;
+
+    hodoo(&server)
+        .args(["project", "ls"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("STAGE").and(predicate::str::contains("In Progress")));
+
+    // The JSON keeps Odoo's shape: a script reads the bare id and looks the name up
+    // itself rather than getting a string it would have to parse back.
+    hodoo(&server)
+        .args(["project", "ls", "-o", "json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"stage_id\":2"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn project_stages_are_listed_with_their_projects_and_created_globally() {
+    let server = server().await;
+    Mock::given(method("POST"))
+        .and(path("/json/2/project.project.stage/search_read"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+            {
+                "id": 1,
+                "name": "To Do",
+                "sequence": 10,
+                "fold": false,
+                "color": 0,
+                "active": true
+            },
+            {
+                "id": 2,
+                "name": "In Progress",
+                "sequence": 15,
+                "fold": false,
+                "color": 0,
+                "active": true
+            }
+        ])))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/json/2/project.project/search_read"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(odoo_project()))
+        .mount(&server)
+        .await;
+
+    // The stub project is in "In Progress", so that row counts one project.
+    hodoo(&server)
+        .args(["project", "stages", "ls"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("PROJECTS"))
+        .stdout(predicate::str::is_match(r"In Progress\s+15\s+no\s+yes\s+1").expect("regex"));
+
+    // Every noun lists with `ls`, so a bare `stages` is an invocation to correct, not a
+    // third way of asking.
+    hodoo(&server)
+        .args(["project", "stages"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("subcommand"));
+
+    Mock::given(method("POST"))
+        .and(path("/json/2/project.project.stage/create"))
+        .and(body_partial_json(json!({
+            "vals_list": [{"name": "Paused", "sequence": 17, "fold": true}]
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([5])))
+        .mount(&server)
+        .await;
+
+    hodoo(&server)
+        .args([
+            "project",
+            "stages",
+            "create",
+            "--name",
+            "Paused",
+            "--sequence",
+            "17",
+            "--fold",
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("#5"));
+
+    // A dry run shows the shape and sends nothing.
+    hodoo(&server)
+        .args(["project", "stages", "create", "--name", "Paused", "-n"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Paused"))
+        .stdout(predicate::str::contains("nothing was sent"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_project_stage_is_renamed_folded_and_deleted_but_not_while_in_use() {
+    let server = server().await;
+    Mock::given(method("POST"))
+        .and(path("/json/2/project.project.stage/write"))
+        .and(body_partial_json(json!({
+            "ids": [2],
+            "vals": {"name": "WIP", "sequence": 20, "fold": true}
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!(true)))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/json/2/project.project.stage/write"))
+        .and(body_partial_json(json!({"vals": {"fold": false}})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!(true)))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/json/2/project.project.stage/unlink"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!(true)))
+        .mount(&server)
+        .await;
+    // One project is in stage #2, so Odoo would refuse the delete: the CLI says so
+    // before sending anything, and names what has to move first. Stage #3 is empty.
+    let counted = |request: &Request| {
+        let asked = request
+            .body_json::<Value>()
+            .ok()
+            .and_then(|body| body["domain"][0][2].as_i64())
+            .unwrap_or_default();
+        ResponseTemplate::new(200).set_body_json(json!(i64::from(asked == 2)))
+    };
+    Mock::given(method("POST"))
+        .and(path("/json/2/project.project/search_count"))
+        .respond_with(counted)
+        .mount(&server)
+        .await;
+
+    hodoo(&server)
+        .args([
+            "project",
+            "stages",
+            "update",
+            "2",
+            "--name",
+            "WIP",
+            "--sequence",
+            "20",
+            "--fold",
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("#2"));
+
+    // --unfold is the other direction, and the two together are a contradiction.
+    hodoo(&server)
+        .args(["project", "stages", "update", "2", "--unfold"])
+        .assert()
+        .success();
+    hodoo(&server)
+        .args(["project", "stages", "update", "2", "--fold", "--unfold"])
+        .assert()
+        .code(2);
+
+    // Nothing to change is an invocation to fix, not a silent no-op.
+    hodoo(&server)
+        .args(["project", "stages", "update", "2"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("nothing to change"));
+
+    hodoo(&server)
+        .args(["project", "stages", "rm", "2"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("1 project is in it"))
+        .stderr(predicate::str::contains("project update"));
+
+    // Nothing is in stage #3, so it goes.
+    hodoo(&server)
+        .args(["project", "stages", "rm", "3", "-f"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("#3"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_task_stage_is_created_inside_the_project_that_offers_it() {
+    let server = server().await;
+    Mock::given(method("POST"))
+        .and(path("/json/2/project.task.type/create"))
+        .and(body_partial_json(json!({
+            "vals_list": [{"name": "Review", "sequence": 40}]
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([13])))
+        .mount(&server)
+        .await;
+    // Attaching is a read-modify-write union, so the project is read first and the
+    // stages it already has (11, 12) survive.
+    Mock::given(method("POST"))
+        .and(path("/json/2/project.project/read"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(odoo_project()))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/json/2/project.project/write"))
+        .and(body_partial_json(
+            json!({"ids": [49], "vals": {"type_ids": [[6, 0, [11, 12, 13]]]}}),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!(true)))
+        .mount(&server)
+        .await;
+
+    hodoo(&server)
+        .args([
+            "project",
+            "task-stages",
+            "create",
+            "--name",
+            "Review",
+            "--project",
+            "49",
+            "--sequence",
+            "40",
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("#13"));
+}

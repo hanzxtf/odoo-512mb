@@ -8,8 +8,8 @@
 
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use hodoo::{
-    Client, Error, Id, MilestoneId, PartnerId, ProjectFilter, ProjectId, StageFilter, TagId,
-    TaskFilter, TaskId, TaskStageId, UserId,
+    Client, Error, Id, MilestoneId, PartnerId, ProjectFilter, ProjectId, ProjectStageFilter,
+    ProjectStageId, StageFilter, TagId, TaskFilter, TaskId, TaskStageId, UserId,
 };
 
 /// A reference the user gave: either a bare id or a name to look up.
@@ -115,7 +115,35 @@ pub async fn stage(
                 .await?;
             let chosen = pick(
                 name,
-                "stage",
+                "task stage",
+                found
+                    .iter()
+                    .map(|stage| (stage.id.get(), stage.name.clone())),
+            )?;
+            Ok(chosen)
+        }
+    }
+}
+
+/// Resolves a `project.project.stage` reference, a *project's* stage.
+///
+/// # Errors
+///
+/// [`Error::Config`] when the name is unknown or ambiguous.
+pub async fn project_stage(client: &Client, reference: &Ref) -> hodoo::Result<ProjectStageId> {
+    match reference {
+        Ref::Id(id) => Ok(Id::new(*id)),
+        Ref::Name(name) => {
+            let found = client
+                .project_stages()
+                .list(ProjectStageFilter {
+                    limit: Some(50),
+                    ..ProjectStageFilter::default()
+                })
+                .await?;
+            let chosen = pick(
+                name,
+                "project stage",
                 found
                     .iter()
                     .map(|stage| (stage.id.get(), stage.name.clone())),
@@ -264,14 +292,15 @@ fn pick<T>(
     if all.is_empty() {
         return Err(Error::Config {
             message: format!(
-                "no {noun} matches {wanted:?}. List what exists with `hodoo {} ls`",
+                "no {noun} matches {wanted:?}. List what exists with `{}`",
                 match noun {
-                    "task" => "task",
-                    "project" => "project",
-                    "stage" => "stage",
-                    "milestone" => "milestone",
-                    "contact" => "call res.partner search_read --body '{}'",
-                    _ => "call res.users search_read --body '{}'",
+                    "task" => "hodoo task ls".to_owned(),
+                    "project" => "hodoo project ls".to_owned(),
+                    "task stage" => "hodoo project task-stages ls <project>".to_owned(),
+                    "project stage" => "hodoo project stages ls".to_owned(),
+                    "milestone" => "hodoo milestone ls --project <project>".to_owned(),
+                    "contact" => "hodoo call res.partner search_read --body '{}'".to_owned(),
+                    _ => "hodoo call res.users search_read --body '{}'".to_owned(),
                 }
             ),
         });

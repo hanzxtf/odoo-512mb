@@ -154,7 +154,6 @@ async fn run(args: &Cli) -> Result<(), Failure> {
         Command::Version => unreachable!("handled above, before the client is built"),
         Command::Project(command) => project(&ctx, command).await,
         Command::Task(command) => task(&ctx, command).await,
-        Command::Stage(command) => cmd::stage::run(&ctx, command).await,
         Command::Milestone(command) => cmd::milestone::run(&ctx, command).await,
         Command::Tag(command) => cmd::tag::run(&ctx, command).await,
         Command::Board(args) => cmd::board::run(&ctx, args).await,
@@ -170,7 +169,8 @@ async fn project(ctx: &Ctx, command: &ProjectCmd) -> Result<(), Failure> {
         ProjectCmd::Create(args) => cmd::project::create(ctx, args).await,
         ProjectCmd::Update { project, fields } => cmd::project::update(ctx, project, fields).await,
         ProjectCmd::Rm { project, force } => cmd::project::rm(ctx, project, *force).await,
-        ProjectCmd::Stages { project } => cmd::project::stages(ctx, project).await,
+        ProjectCmd::Stages { command } => cmd::stage::run_project_stages(ctx, command).await,
+        ProjectCmd::TaskStages { command } => cmd::stage::run_task_stages(ctx, command).await,
         ProjectCmd::Attach { project, stages } => cmd::project::attach(ctx, project, stages).await,
         ProjectCmd::Detach { project, stages } => cmd::project::detach(ctx, project, stages).await,
         ProjectCmd::Comment {

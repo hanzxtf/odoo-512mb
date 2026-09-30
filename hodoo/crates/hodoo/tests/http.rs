@@ -452,3 +452,102 @@ async fn ids_are_tagged_so_a_task_id_cannot_be_passed_as_a_project_id() {
     assert_eq!(user.get(), 1);
     assert_eq!(format!("{project:?}"), "Project(3)");
 }
+
+/// A project stage as Odoo 19 answers a `search_read`.
+fn odoo_project_stage() -> Value {
+    json!([{
+        "id": 2,
+        "name": "In Progress",
+        "sequence": 15,
+        "fold": false,
+        "color": 0,
+        "active": true
+    }])
+}
+
+#[tokio::test]
+async fn a_project_stage_is_read_and_created_on_its_own_model() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/json/2/project.project.stage/search_read"))
+        .and(body_partial_json(json!({
+            "domain": [],
+            "fields": ["id", "name", "sequence", "fold", "color", "active"]
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(odoo_project_stage()))
+        .mount(&server)
+        .await;
+    // A project stage is global: nothing is attached on create, unlike a task
+    // stage's `project_ids`.
+    Mock::given(method("POST"))
+        .and(path("/json/2/project.project.stage/create"))
+        .and(body_partial_json(json!({
+            "vals_list": [{"name": "Paused", "sequence": 17}]
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([5])))
+        .mount(&server)
+        .await;
+
+    let client = client(&server, "secret");
+    let stages = client
+        .project_stages()
+        .list(hodoo::ProjectStageFilter::default())
+        .await
+        .expect("list");
+    assert_eq!(stages.len(), 1);
+    assert_eq!(stages[0].id, hodoo::ProjectStageId::new(2));
+    assert_eq!(stages[0].name, "In Progress");
+    assert_eq!(stages[0].sequence, 15);
+    assert!(!stages[0].fold);
+
+    let created = client
+        .project_stages()
+        .create(hodoo::StageFields {
+            name: Some("Paused".into()),
+            sequence: Some(17),
+            ..hodoo::StageFields::default()
+        })
+        .await
+        .expect("create");
+    assert_eq!(created, hodoo::ProjectStageId::new(5));
+}
+
+#[tokio::test]
+async fn a_project_stage_is_renamed_and_deleted_by_id() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/json/2/project.project.stage/write"))
+        .and(body_partial_json(json!({
+            "ids": [2],
+            "vals": {"name": "WIP", "sequence": 20, "fold": true}
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!(true)))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/json/2/project.project.stage/unlink"))
+        .and(body_partial_json(json!({"ids": [2]})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!(true)))
+        .mount(&server)
+        .await;
+
+    let client = client(&server, "secret");
+    client
+        .project_stages()
+        .update(
+            hodoo::ProjectStageId::new(2),
+            hodoo::StageFields {
+                name: Some("WIP".into()),
+                sequence: Some(20),
+                fold: Some(true),
+                ..hodoo::StageFields::default()
+            },
+        )
+        .await
+        .expect("update");
+    client
+        .project_stages()
+        .delete(hodoo::ProjectStageId::new(2))
+        .await
+        .expect("delete");
+}

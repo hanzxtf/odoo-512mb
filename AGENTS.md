@@ -55,6 +55,16 @@ with `-o json` / `--json` / `HODOO_OUTPUT=json` — worth setting once at the to
 script. `docs/superpowers/specs/2026-09-28-hodoo-cli-ux-design.md` records why, with the
 clig.dev rules behind each choice; `hodoo/README.md` is the user-facing version.
 
+**"Stage" is two different models, and every stage command is under `hodoo project`.**
+A task's stage is a `project.task.type`, a kanban column: `project task-stages ls
+<project>`, `project task-stages create --name X --project Y`, and `task --stage` to move
+a task into one. A *project's* stage is a `project.project.stage`, one of a handful the
+server shares: `project stages ls|create|update|rm`, and `project update --stage` to move
+a project into one. `project attach`/`detach` take `--task-stage`. There is no top-level
+stage command: a stage is a project's business either way. `project stages rm` refuses
+while a project is in the stage and names it, because Odoo answers with a bare
+`ValidationError` naming only the model.
+
 Things that will bite an agent writing commands into a script:
 
 - **`rm` refuses without `-f` when stdin is not a terminal** (and without a `y` on one).

@@ -1,8 +1,6 @@
 //! `hodoo project …`
 
-use hodoo::{
-    Id, Project, ProjectFields, ProjectFilter, ProjectId, ProjectStageId, TaskFilter, Visibility,
-};
+use hodoo::{Id, Project, ProjectFields, ProjectFilter, ProjectId, TaskFilter, Visibility};
 use serde_json::{Map, Value, json};
 
 use crate::Failure;
@@ -25,7 +23,7 @@ pub async fn ls(ctx: &Ctx, args: &ProjectLsArgs) -> Result<(), Failure> {
             None => None,
         },
         stage: match &args.stage {
-            Some(text) => Some(project_stage(ctx, text).await?),
+            Some(text) => Some(refs::project_stage(&ctx.client, &Ref::parse(text)).await?),
             None => None,
         },
         tags: tags_of(ctx, &args.tags).await?,
@@ -65,12 +63,24 @@ pub async fn ls(ctx: &Ctx, args: &ProjectLsArgs) -> Result<(), Failure> {
             .map(|id| id.get()),
     )
     .await?;
+    // A project's own stage, which is a `project.project.stage` and not one of the
+    // task stages the board is grouped by.
+    let stages = names(
+        ctx,
+        "project.project.stage",
+        projects
+            .iter()
+            .filter_map(|project| project.stage)
+            .map(|id| id.get()),
+    )
+    .await?;
 
     let mut table = Table::new(vec![
         Column::number("ID"),
         Column::text("NAME").flexible(),
         Column::text("CUSTOMER"),
         Column::text("MANAGER"),
+        Column::text("STAGE"),
         Column::text("VISIBILITY"),
         Column::text("OPEN/TASKS"),
         Column::text("ENDS"),
@@ -82,6 +92,7 @@ pub async fn ls(ctx: &Ctx, args: &ProjectLsArgs) -> Result<(), Failure> {
                 project.name.clone(),
                 lookup(&customers, project.customer.map(|id| id.get())),
                 lookup(&managers, project.manager.map(|id| id.get())),
+                lookup(&stages, project.stage.map(|id| id.get())),
                 project.visibility.as_str().to_owned(),
                 format!("{}/{}", project.open_task_count, project.task_count),
                 show_date(project.date),
@@ -112,6 +123,13 @@ pub async fn show(ctx: &Ctx, text: &str) -> Result<(), Failure> {
             .unwrap_or_else(|| format!("#{}", id.get())),
         None => "unassigned".to_owned(),
     };
+    // The project's own stage, not the task stages printed below.
+    let stage = match project.stage {
+        Some(id) => name_of(ctx, "project.project.stage", id.get())
+            .await?
+            .unwrap_or_else(|| format!("#{}", id.get())),
+        None => "none".to_owned(),
+    };
 
     let mut block = Table::new(vec![
         Column::text("FIELD"),
@@ -119,6 +137,7 @@ pub async fn show(ctx: &Ctx, text: &str) -> Result<(), Failure> {
     ]);
     block.push(["customer".to_owned(), customer]);
     block.push(["manager".to_owned(), manager]);
+    block.push(["stage".to_owned(), stage]);
     block.push([
         "visibility".to_owned(),
         project.visibility.as_str().to_owned(),
@@ -172,7 +191,7 @@ pub async fn create(ctx: &Ctx, args: &ProjectCreateArgs) -> Result<(), Failure> 
     ctx.out
         .note(&format!("created  project #{}  {}", id.get(), args.name))?;
     ctx.out.hint(&format!(
-        "a task needs a stage first: hodoo stage create --name Backlog --project {}",
+        "a task needs a task stage first: hodoo project task-stages create --name Backlog --project {}",
         id.get()
     ))?;
     Ok(())
@@ -350,8 +369,8 @@ pub async fn rm(ctx: &Ctx, text: &str, force: bool) -> Result<(), Failure> {
     Ok(())
 }
 
-/// `hodoo project stages <project>`
-pub async fn stages(ctx: &Ctx, text: &str) -> Result<(), Failure> {
+/// `hodoo project task-stages <project>`
+pub async fn task_stages(ctx: &Ctx, text: &str) -> Result<(), Failure> {
     let id = refs::project(&ctx.client, &Ref::parse(text)).await?;
     let project = ctx.client.projects().get(id).await?;
     if ctx.out.mode() == Mode::Json {
@@ -361,13 +380,13 @@ pub async fn stages(ctx: &Ctx, text: &str) -> Result<(), Failure> {
     if project.task_stages.is_empty() {
         return Ok(ctx.out.note(
             "no stages attached: a task cannot be staged until one is, so run \
-             hodoo stage create --name Backlog --project <project>",
+             hodoo project task-stages create --name Backlog --project <project>",
         )?);
     }
     stage_table(ctx, id).await
 }
 
-/// `hodoo project attach <project> --stage <stage>…`
+/// `hodoo project attach <project> --task-stage <stage>…`
 pub async fn attach(ctx: &Ctx, text: &str, stages: &[String]) -> Result<(), Failure> {
     let id = refs::project(&ctx.client, &Ref::parse(text)).await?;
     let mut ids = Vec::new();
@@ -394,7 +413,7 @@ pub async fn attach(ctx: &Ctx, text: &str, stages: &[String]) -> Result<(), Fail
     Ok(())
 }
 
-/// `hodoo project detach <project> --stage <stage>…`
+/// `hodoo project detach <project> --task-stage <stage>…`
 pub async fn detach(ctx: &Ctx, text: &str, stages: &[String]) -> Result<(), Failure> {
     let id = refs::project(&ctx.client, &Ref::parse(text)).await?;
     let mut ids = Vec::new();
@@ -530,7 +549,7 @@ async fn apply(
         preview.insert("manager".into(), json!(format!("{text} (#{})", id.get())));
     }
     if let Some(text) = &args.stage {
-        let id = project_stage(ctx, text).await?;
+        let id = refs::project_stage(&ctx.client, &Ref::parse(text)).await?;
         fields.stage = Some(id);
         preview.insert("stage".into(), json!(format!("{text} (#{})", id.get())));
     }
@@ -563,32 +582,6 @@ async fn apply(
         preview.insert("dependencies".into(), json!(on));
     }
     Ok(())
-}
-
-/// Resolves a `project.project.stage` by name or id.
-async fn project_stage(ctx: &Ctx, text: &str) -> Result<ProjectStageId, Failure> {
-    if let Ref::Id(id) = Ref::parse(text) {
-        return Ok(Id::new(id));
-    }
-    let rows = ctx
-        .client
-        .call(
-            "project.project.stage",
-            "search_read",
-            json!({ "domain": [["name", "ilike", text]], "fields": ["name"], "limit": 10 }),
-        )
-        .await?;
-    rows.as_array()
-        .and_then(|rows| rows.first())
-        .and_then(|row| row.get("id"))
-        .and_then(Value::as_i64)
-        .map(Id::new)
-        .ok_or_else(|| {
-            Failure::Usage(format!(
-                "no project stage matches {text:?}. See them with: hodoo call \
-                 project.project.stage search_read --body '{{\"fields\":[\"name\"]}}'"
-            ))
-        })
 }
 
 /// Resolves a project template by name or id.

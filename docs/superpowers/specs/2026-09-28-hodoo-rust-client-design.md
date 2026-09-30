@@ -340,6 +340,16 @@ impl Stages<'_> {
         -> Result<TaskStageId>;
 }
 
+/// `project.project.stage`, a different model: the stages a *project* moves
+/// through. Global, so there is nothing to attach.
+impl ProjectStages<'_> {
+    pub async fn list(&self, filter: ProjectStageFilter) -> Result<Vec<ProjectStage>>;
+    pub async fn create(&self, fields: StageFields) -> Result<ProjectStageId>;
+    pub async fn update(&self, id: ProjectStageId, fields: StageFields) -> Result<()>;
+    /// Odoo refuses this while a project is in the stage.
+    pub async fn delete(&self, id: ProjectStageId) -> Result<()>;
+}
+
 impl Milestones<'_> {
     pub async fn list(&self, project: ProjectId) -> Result<Vec<Milestone>>;
     pub async fn create(&self, fields: MilestoneFields) -> Result<MilestoneId>;
@@ -427,14 +437,15 @@ ENV     ODOO_URL, ODOO_API_KEY, ODOO_DB   (flags win)
 whoami                      POST res.users/context_get; prints the resolved user
 version                     GET /web/version (no key needed)
 project ls|get|create|update|rm
-project stages <id>         the task stages attached to this project (type_ids)
-project attach-stage <id> --stage <id>...   may repeat
-project detach-stage <id> --stage <id>...   may repeat
+project stages ls|create|update|rm    the stages a project moves through (project.project.stage)
+project task-stages ls <id>           the task stages attached to this project (type_ids)
+project task-stages create --name <N> [--project <id>] [--sequence <N>] [--fold]
+project attach <id> --task-stage <id>...   may repeat
+project detach <id> --task-stage <id>...   may repeat
 task ls|get|create|update|rm
 task done <id>              state = 1_done
 task cancel <id>            state = 1_canceled
 task comment <id> --body <TEXT> [--internal]
-stage ls [--project <id>] | create --name <N> [--project <id>]
 milestone ls --project <id> | create --project <id> --name <N> [--deadline YYYY-MM-DD]
 milestone reached <id> [--undo]
 tag ls | ensure <NAME>
@@ -543,8 +554,11 @@ Recorded after implementation, so the spec does not quietly disagree with the cr
   successful JSON body fails to fit the Rust type.
 - `Client::whoami` wraps `res.users/context_get`, which Odoo 19 documents as the way a
   key learns its own user id; the source confirms it appends `uid` to the context.
-- CLI additions beyond the spec: `project comment`, `project attach-stage` /
-  `detach-stage`, `milestone rm`, `stage ls --project`, `--allow-milestones`.
+- CLI additions beyond the spec: `project comment`, `project attach` / `detach`,
+  `milestone rm`, `--allow-milestones`. Renamed in the CLI UX rework: `stage …` became
+  `project task-stages …`, `project stages <id>` became `project task-stages ls <id>`, and
+  `project stages` now means `project.project.stage` (see
+  `2026-09-28-hodoo-cli-ux-design.md`).
 - `hodoo/README.md` was added, and `AGENTS.md` documents the workspace for agents.
 - Verified against the live instance, with no records created: `hodoo version --url
   https://odoo.jsmx.org` answers `{"version":"19.0"}`; a missing key exits 2 with a usage

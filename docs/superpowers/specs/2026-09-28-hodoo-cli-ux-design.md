@@ -73,9 +73,14 @@ hodoo project show <project>        # detail block: dates, stages, counts, chatt
 hodoo project create --name "Acme website" [--customer acme] [--template <tpl>]
 hodoo project update <project> [fields]
 hodoo project rm <project> [-f]
-hodoo project stages <project>      # the stage board, with open counts
-hodoo project attach <project> --stage <stage>…   # borrow a shared stage
-hodoo project detach <project> --stage <stage>…
+hodoo project stages ls             # the project stages, with what sits in each
+hodoo project stages create --name "On Hold" [--sequence 17] [--fold]
+hodoo project stages update <stage> [--name <N>] [--sequence <N>] [--fold|--unfold]
+hodoo project stages rm <stage> [-f]
+hodoo project task-stages ls <project>   # the project's task stages, with open counts
+hodoo project task-stages create --name "Review" [--project <ref>] [--sequence 40] [--fold]
+hodoo project attach <project> --task-stage <stage>…   # borrow a shared task stage
+hodoo project detach <project> --task-stage <stage>…
 hodoo project comment <project> --body "…" [--internal]
 
 hodoo task ls [--project <ref>] [--mine] [--open] [--overdue] [--due-before <when>]
@@ -93,8 +98,6 @@ hodoo task deps <task>              # what it waits on, and what waits on it
 hodoo task rm <task> [-f]
 hodoo board [<project>]             # tasks grouped by stage: the kanban a founder wants
 
-hodoo stage ls [--project <ref>]
-hodoo stage create --name "Review" [--project <ref>] [--sequence 40] [--fold]
 hodoo milestone ls --project <ref>
 hodoo milestone create --project <ref> --name "Beta" [--due <when>]
 hodoo milestone reached <id> [--undo]
@@ -115,6 +118,17 @@ hodoo completions <shell>
   scenario script does so with one exported variable.
 - `project rm` refuses without `-f` when stdin is not a terminal; `task rm` and
   `milestone rm` behave the same.
+- `hodoo stage …` became `hodoo project task-stages …`, and `hodoo project stages <project>`
+  became `hodoo project task-stages ls <project>`. "Stage" alone now means a *project's*
+  stage: `hodoo project stages` lists `project.project.stage`, and `project attach`/`detach`
+  take `--task-stage`. Odoo keeps the two ideas in two models, so a CLI that calls both of
+  them "stage" makes the reader guess which one a command touches.
+- **A stage is a project's business, so every stage command lives under `hodoo project`.** A
+  top-level `task-stages ls` listing every stage on the server was dropped: it answered a
+  question nobody asks, and it made "stage" mean a task's stage at the top level and a
+  project's stage one level down. `project task-stages` is scoped to a project like every
+  other `project` subcommand, and both stage nouns now carry the same verbs (`ls`, `create`,
+  and for a project stage `update`, `rm`), which is also what makes `--help` show the CRUD.
 
 ## Structure
 
@@ -166,3 +180,14 @@ churn because the CLI grew a personality.
   built CLI, each named after the field it sets.
 - `milestone rm` gained an example when the test that requires examples in every leaf
   command caught it missing.
+- `project stages` was reachable only through `hodoo call` until it grew `ls`, `create`,
+  `update` and `rm` (the last refuses while a project is in the stage, naming it, because
+  Odoo's own answer is a `ValidationError` about the project model). `project ls` and
+  `project show` now name the stage a project is in; both read `project.project.stage`
+  through the typed client, which grew `ProjectStages` (`list`, `create`, `update`,
+  `delete`) alongside `Stages`.
+- `StageFields` gained `active`, so a caller can archive a stage, the alternative Odoo
+  itself suggests to a blocked delete.
+- A name that matches nothing now suggests the command that would list it, per noun: "no
+  project stage matches … List what exists with `hodoo project stages ls`". The old wording
+  printed `hodoo stage ls`, which the rename above retired.

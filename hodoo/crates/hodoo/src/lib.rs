@@ -60,6 +60,7 @@ pub mod error;
 pub mod id;
 pub mod milestone;
 pub mod project;
+pub mod project_stage;
 pub mod stage;
 pub mod tag;
 pub mod task;
@@ -83,6 +84,7 @@ pub use id::{
 };
 pub use milestone::{Milestone, MilestoneFields};
 pub use project::{Project, ProjectFields, ProjectFilter, Visibility};
+pub use project_stage::{ProjectStage, ProjectStageFilter};
 pub use stage::{StageFields, StageFilter, TaskStage};
 pub use tag::Tag;
 pub use task::{Priority, Task, TaskFields, TaskFilter, TaskState};
@@ -322,6 +324,12 @@ impl Client {
     #[must_use]
     pub fn stages(&self) -> stage::Stages<'_> {
         stage::Stages::new(self)
+    }
+
+    /// `project.project.stage`, the stages a *project* moves through.
+    #[must_use]
+    pub fn project_stages(&self) -> project_stage::ProjectStages<'_> {
+        project_stage::ProjectStages::new(self)
     }
 
     /// `project.milestone`.

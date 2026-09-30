@@ -71,6 +71,9 @@ pub struct StageFields {
     pub fold: Option<bool>,
     /// Colour index.
     pub color: Option<i64>,
+    /// `Some(false)` archives the stage. Odoo refuses to delete a project stage
+    /// a project is in, and suggests archiving instead.
+    pub active: Option<bool>,
 }
 
 impl StageFields {
@@ -98,6 +101,9 @@ impl StageFields {
         }
         if let Some(color) = self.color {
             vals.insert("color".into(), json!(color));
+        }
+        if let Some(active) = self.active {
+            vals.insert("active".into(), json!(active));
         }
         Value::Object(vals)
     }

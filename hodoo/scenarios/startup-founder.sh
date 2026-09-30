@@ -122,7 +122,7 @@ down() {
   # cascade with the project, which is also what releases the stages.
   local project
   for project in $(printf '%s' "$projects" | tr ',' ' '); do
-    stage_ids="$stage_ids $("$HODOO" project stages "$project" | ids)"
+    stage_ids="$stage_ids $("$HODOO" project task-stages ls "$project" | ids)"
   done
   stage_ids="$(printf '%s' "$stage_ids" | tr -s ' ' | sed 's/^ *//;s/ *$//' | tr ' ' ',')"
 
@@ -269,43 +269,43 @@ up() {
     "a fresh project starts with no task stages"
 
   local a_backlog a_design a_build a_review a_live
-  a_backlog="$("$HODOO" stage create --name "Backlog $MARKER" --project "$p_acme" --sequence 10 | field .id)"
-  a_design="$("$HODOO" stage create --name "Design $MARKER" --project "$p_acme" --sequence 20 | field .id)"
-  a_build="$("$HODOO" stage create --name "Build $MARKER" --project "$p_acme" --sequence 30 | field .id)"
-  a_review="$("$HODOO" stage create --name "Review $MARKER" --project "$p_acme" --sequence 40 | field .id)"
-  a_live="$("$HODOO" stage create --name "Live $MARKER" --project "$p_acme" --sequence 50 --fold | field .id)"
+  a_backlog="$("$HODOO" project task-stages create --name "Backlog $MARKER" --project "$p_acme" --sequence 10 | field .id)"
+  a_design="$("$HODOO" project task-stages create --name "Design $MARKER" --project "$p_acme" --sequence 20 | field .id)"
+  a_build="$("$HODOO" project task-stages create --name "Build $MARKER" --project "$p_acme" --sequence 30 | field .id)"
+  a_review="$("$HODOO" project task-stages create --name "Review $MARKER" --project "$p_acme" --sequence 40 | field .id)"
+  a_live="$("$HODOO" project task-stages create --name "Live $MARKER" --project "$p_acme" --sequence 50 --fold | field .id)"
 
   local n_inbox n_doing n_blocked n_done
-  n_inbox="$("$HODOO" stage create --name "Inbox $MARKER" --project "$p_nordwind" --sequence 10 | field .id)"
-  n_doing="$("$HODOO" stage create --name "Doing $MARKER" --project "$p_nordwind" --sequence 20 | field .id)"
-  n_blocked="$("$HODOO" stage create --name "Blocked $MARKER" --project "$p_nordwind" --sequence 30 | field .id)"
-  n_done="$("$HODOO" stage create --name "Done $MARKER" --project "$p_nordwind" --sequence 40 --fold | field .id)"
+  n_inbox="$("$HODOO" project task-stages create --name "Inbox $MARKER" --project "$p_nordwind" --sequence 10 | field .id)"
+  n_doing="$("$HODOO" project task-stages create --name "Doing $MARKER" --project "$p_nordwind" --sequence 20 | field .id)"
+  n_blocked="$("$HODOO" project task-stages create --name "Blocked $MARKER" --project "$p_nordwind" --sequence 30 | field .id)"
+  n_done="$("$HODOO" project task-stages create --name "Done $MARKER" --project "$p_nordwind" --sequence 40 --fold | field .id)"
 
   local d_ideas d_ready d_building d_qa d_released
-  d_ideas="$("$HODOO" stage create --name "Ideas $MARKER" --project "$p_product" --sequence 10 | field .id)"
-  d_ready="$("$HODOO" stage create --name "Ready $MARKER" --project "$p_product" --sequence 20 | field .id)"
-  d_building="$("$HODOO" stage create --name "Building $MARKER" --project "$p_product" --sequence 30 | field .id)"
-  d_qa="$("$HODOO" stage create --name "QA $MARKER" --project "$p_product" --sequence 40 | field .id)"
-  d_released="$("$HODOO" stage create --name "Released $MARKER" --project "$p_product" --sequence 50 --fold | field .id)"
+  d_ideas="$("$HODOO" project task-stages create --name "Ideas $MARKER" --project "$p_product" --sequence 10 | field .id)"
+  d_ready="$("$HODOO" project task-stages create --name "Ready $MARKER" --project "$p_product" --sequence 20 | field .id)"
+  d_building="$("$HODOO" project task-stages create --name "Building $MARKER" --project "$p_product" --sequence 30 | field .id)"
+  d_qa="$("$HODOO" project task-stages create --name "QA $MARKER" --project "$p_product" --sequence 40 | field .id)"
+  d_released="$("$HODOO" project task-stages create --name "Released $MARKER" --project "$p_product" --sequence 50 --fold | field .id)"
 
   local h_someday h_week h_doing h_done
-  h_someday="$("$HODOO" stage create --name "Someday $MARKER" --project "$p_personal" --sequence 10 | field .id)"
-  h_week="$("$HODOO" stage create --name "This week $MARKER" --project "$p_personal" --sequence 20 | field .id)"
-  h_doing="$("$HODOO" stage create --name "Doing $MARKER" --project "$p_personal" --sequence 30 | field .id)"
-  h_done="$("$HODOO" stage create --name "Done $MARKER" --project "$p_personal" --sequence 40 --fold | field .id)"
+  h_someday="$("$HODOO" project task-stages create --name "Someday $MARKER" --project "$p_personal" --sequence 10 | field .id)"
+  h_week="$("$HODOO" project task-stages create --name "This week $MARKER" --project "$p_personal" --sequence 20 | field .id)"
+  h_doing="$("$HODOO" project task-stages create --name "Doing $MARKER" --project "$p_personal" --sequence 30 | field .id)"
+  h_done="$("$HODOO" project task-stages create --name "Done $MARKER" --project "$p_personal" --sequence 40 --fold | field .id)"
 
   expect 18 "$("$HODOO" call project.task.type search_count \
     --body "{\"domain\":[[\"name\",\"like\",\"$MARKER\"]]}")" "scenario task stages"
-  expect 5 "$("$HODOO" project stages "$p_acme" | count)" "stages attached to Acme"
-  expect "true" "$("$HODOO" stage ls --project "$p_acme" --limit 0 \
+  expect 5 "$("$HODOO" project task-stages ls "$p_acme" | count)" "stages attached to Acme"
+  expect "true" "$("$HODOO" project task-stages ls "$p_acme" \
     | python3 -c 'import json,sys; print(str(any(s["fold"] for s in json.load(sys.stdin))).lower())')" \
     "one Acme stage is folded"
 
   # attach/detach: one stage shared with a second project, then given back.
-  "$HODOO" project attach "$p_nordwind" --stage "$a_design" > /dev/null
-  expect 5 "$("$HODOO" project stages "$p_nordwind" | count)" "Nordwind borrowed the Design stage"
-  "$HODOO" project detach "$p_nordwind" --stage "$a_design" > /dev/null
-  expect 4 "$("$HODOO" project stages "$p_nordwind" | count)" "and gave it back"
+  "$HODOO" project attach "$p_nordwind" --task-stage "$a_design" > /dev/null
+  expect 5 "$("$HODOO" project task-stages ls "$p_nordwind" | count)" "Nordwind borrowed the Design stage"
+  "$HODOO" project detach "$p_nordwind" --task-stage "$a_design" > /dev/null
+  expect 4 "$("$HODOO" project task-stages ls "$p_nordwind" | count)" "and gave it back"
 
   # -- milestones -----------------------------------------------------------
   step "milestones"
@@ -526,7 +526,7 @@ print(", ".join(t["name"] for t in json.load(sys.stdin)))
 
   # Per-stage load on the biggest project, which is what a board view shows.
   note "the Acme board:"
-  "$HODOO" stage ls --project "$p_acme" --limit 0 | python3 -c '
+  "$HODOO" project task-stages ls "$p_acme" | python3 -c '
 import json, subprocess, sys
 for stage in json.load(sys.stdin):
     counted = subprocess.run(
@@ -555,13 +555,13 @@ for stage in json.load(sys.stdin):
     "a foreign stage is accepted (the project/stage rule is UI-only)"
   # ...and using it enrolls that stage into the project, which is how the kanban
   # stays consistent afterwards. Undo both, or the dataset gains a stray stage.
-  expect "true" "$("$HODOO" project stages "$p_personal" \
+  expect "true" "$("$HODOO" project task-stages ls "$p_personal" \
     | python3 -c "import json,sys; print(str(any(s['id'] == $a_build for s in json.load(sys.stdin))).lower())")" \
     "and the stage is enrolled into the other project"
   # A script has nobody to ask, so it says -f out loud: that is the point of the rule.
   "$HODOO" task rm "$probe" -f > /dev/null
-  "$HODOO" project detach "$p_personal" --stage "$a_build" > /dev/null
-  expect 4 "$("$HODOO" project stages "$p_personal" | count)" "the stray stage was detached again"
+  "$HODOO" project detach "$p_personal" --task-stage "$a_build" > /dev/null
+  expect 4 "$("$HODOO" project task-stages ls "$p_personal" | count)" "the stray stage was detached again"
 
   # What Odoo does refuse: an id that is gone, and a field it does not have.
   set +e

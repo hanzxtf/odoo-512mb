@@ -49,9 +49,10 @@ export ODOO_API_KEY=...
 hodoo version                       # needs no key at all
 hodoo whoami                        # proves url, certificate and key in one call
 hodoo project ls                    # what is there, as a table
+hodoo project stages ls             # the project stages, and how many projects sit in each
 hodoo project ls --mine
 hodoo project create --name "Acme website" --customer acme --milestones
-hodoo stage create --name "Review" --project acme --sequence 40
+hodoo project task-stages create --name "Review" --project acme --sequence 40
 hodoo task create --name "Write the copy" --project acme --stage Backlog \
     --assignee me --due +7d --priority high --tag client
 hodoo task ls --project acme --open
@@ -120,6 +121,12 @@ invocation was wrong (bad flag, unknown reference, a delete without confirmation
 - **`-v`/`--verbose`** adds Odoo's Python traceback on failure.
 - **`hodoo help <command>`** and `--help` on anything explain that command, with
   examples; `--help` also lists the credential order and the exit codes.
+- **"Stage" means two different things, so the commands say which.** A task's stage
+  (`project task-stages ls|create`, `task create --stage`) is one of a project's kanban
+  columns. A *project's* stage (`project stages ls|create|update|rm`, `project update
+  --stage`) is one of a handful the whole server shares. `project attach` and `project
+  detach` take `--task-stage`, because that is the kind they attach. Everything about a
+  stage lives under `hodoo project`, since a stage is a project's business either way.
 
 Configuration resolves in this order, first hit wins:
 
@@ -180,7 +187,8 @@ Odoo's dates are `DateTime<Utc>`/`NaiveDate` rather than strings, and
 ## What it encodes, so callers do not rediscover it
 
 - A task's stage is a `project.task.type`; a *project's* stage is a
-  `project.project.stage`. Two different things, two different id types.
+  `project.project.stage`. Two different things, two different id types, and both live
+  under `hodoo project`: `project task-stages` and `project stages`.
 - A task stage belongs to a project (`project.task.type.project_ids`) before a
   task in that project can sit in it. Plain `create` on a project does not create
   any stage; `stages().create_in(project, ..)` does. The rule is a view domain,
@@ -225,15 +233,15 @@ Odoo's dates are `DateTime<Utc>`/`NaiveDate` rather than strings, and
 
 ## What it does not wrap, and the call that does
 
-The typed surface covers projects, tasks, stages, tags, milestones and chatter. Everything
-else is one `call` — these are the ones that came up in practice, with what was verified
-against Odoo 19.0 rather than assumed.
+The typed surface covers projects, tasks, task stages, project stages, tags, milestones
+and chatter. Everything else is one `call` — these are the ones that came up in practice,
+with what was verified against Odoo 19.0 rather than assumed.
 
 | Want | Call |
 |---|---|
 | Project from a template (repeatable setups) | `call project.project action_create_from_template --ids <tpl> --body '{"values":{...}}'` — see below |
 | Create a client contact | `call res.partner create --body '{"vals_list":[{"name":"Acme","is_company":true}]}'` — needs Contacts > Creation (`base.group_partner_manager`), which a project administrator does not have |
-| Project stages (`To Do`, `In Progress`, ...) | `call project.project.stage search_read` then `project update --stage <id>` |
+| Archive a project stage | `call project.project.stage write --ids <id> --body '{"vals":{"active":false}}'` — what Odoo suggests when a project is still in the stage |
 | Collaborators, project roles | `call project.collaborator ...` / `call project.role ...` |
 | Rollups and group-bys | `call project.task search_count --body '{"domain":[...]}'` |
 | Find your own user id | `hodoo whoami` (wraps `res.users/context_get`) |

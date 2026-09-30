@@ -175,7 +175,7 @@ that follows the same conventions: marker-based teardown, assertions as it build
 | prove credentials | `hodoo whoami -o json`, `hodoo version` |
 | counterparties | `hodoo call res.partner create --body '{"vals_list":[...]}'` |
 | project | `hodoo project create --name ... --visibility employees --milestones --dependencies` |
-| columns | `hodoo stage create --name ... --project ... --sequence N [--fold]` |
+| columns | `hodoo project task-stages create --name ... --project ... --sequence N [--fold]` |
 | gates | `hodoo milestone create --project ... --name ... --due +Nd` |
 | items | `hodoo task create --name ... --stage ... --priority ... --tag ... --description ...` |
 | structure | `--parent` for sub-items, `--depends-on` for the chain |

@@ -22,6 +22,7 @@ fn expectations() -> Vec<(&'static str, &'static [&'static str])> {
         ("project.project", hodoo::project::FIELDS),
         ("project.task", hodoo::task::FIELDS),
         ("project.task.type", hodoo::stage::FIELDS),
+        ("project.project.stage", hodoo::project_stage::FIELDS),
         ("project.milestone", hodoo::milestone::FIELDS),
         ("project.tags", hodoo::tag::FIELDS),
         ("mail.message", hodoo::chatter::FIELDS),

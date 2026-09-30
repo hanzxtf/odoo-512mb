@@ -385,15 +385,15 @@ print(json.dumps({"vals_list": [{"name": sys.argv[1], "is_company": False, "comm
   expect "[]" "$("$HODOO" project show "$p_dd" | field .type_ids)" \
     "a fresh project starts with no task stages"
   local -A S=()
-  S[intake]="$("$HODOO" stage create --name "Intake $MARKER" --project "$p_dd" --sequence 10 | field .id)"
-  S[rfi]="$("$HODOO" stage create --name "RFI Issued $MARKER" --project "$p_dd" --sequence 20 | field .id)"
-  S[evidence]="$("$HODOO" stage create --name "Evidence Received $MARKER" --project "$p_dd" --sequence 30 | field .id)"
-  S[testing]="$("$HODOO" stage create --name "Testing $MARKER" --project "$p_dd" --sequence 40 | field .id)"
-  S[findings]="$("$HODOO" stage create --name "Findings $MARKER" --project "$p_dd" --sequence 50 | field .id)"
-  S[ic]="$("$HODOO" stage create --name "IC Review $MARKER" --project "$p_dd" --sequence 60 | field .id)"
-  S[closed]="$("$HODOO" stage create --name "Closed $MARKER" --project "$p_dd" --sequence 70 --fold | field .id)"
+  S[intake]="$("$HODOO" project task-stages create --name "Intake $MARKER" --project "$p_dd" --sequence 10 | field .id)"
+  S[rfi]="$("$HODOO" project task-stages create --name "RFI Issued $MARKER" --project "$p_dd" --sequence 20 | field .id)"
+  S[evidence]="$("$HODOO" project task-stages create --name "Evidence Received $MARKER" --project "$p_dd" --sequence 30 | field .id)"
+  S[testing]="$("$HODOO" project task-stages create --name "Testing $MARKER" --project "$p_dd" --sequence 40 | field .id)"
+  S[findings]="$("$HODOO" project task-stages create --name "Findings $MARKER" --project "$p_dd" --sequence 50 | field .id)"
+  S[ic]="$("$HODOO" project task-stages create --name "IC Review $MARKER" --project "$p_dd" --sequence 60 | field .id)"
+  S[closed]="$("$HODOO" project task-stages create --name "Closed $MARKER" --project "$p_dd" --sequence 70 --fold | field .id)"
   expect "$STAGES" "$("$HODOO" call project.task.type search_count --body "{\"domain\":[[\"name\",\"like\",\"$MARKER\"]]}")" "icare-dd task stages"
-  expect "$STAGES" "$("$HODOO" project stages "$p_dd" | count)" "stages attached to the project"
+  expect "$STAGES" "$("$HODOO" project task-stages ls "$p_dd" | count)" "stages attached to the project"
 
   # -- the gates ------------------------------------------------------------
   step "the four phase gates"
