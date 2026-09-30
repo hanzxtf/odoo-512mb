@@ -4,7 +4,7 @@
 //! project stage is global -- no project owns it, and a project points at exactly one
 //! through `stage_id` -- so Odoo ships a handful (`To Do`, `In Progress`, `Done`,
 //! `Cancelled`) and a team rarely adds another. The fields a caller writes are the same
-//! as a task stage's, so [`StageFields`](crate::StageFields) serves both.
+//! as a task stage's, so [`StageFields`] serves both.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
